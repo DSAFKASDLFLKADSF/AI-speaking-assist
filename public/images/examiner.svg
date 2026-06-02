@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" fill="none">
+  <rect width="800" height="500" fill="#1e293b"/>
+  <circle cx="400" cy="180" r="72" fill="#475569"/>
+  <path d="M280 420c20-80 220-80 240 0" fill="#64748b"/>
+  <rect x="320" y="300" width="160" height="120" rx="8" fill="#334155"/>
+  <text x="400" y="470" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="20">TOEFL Virtual Interview</text>
+</svg>

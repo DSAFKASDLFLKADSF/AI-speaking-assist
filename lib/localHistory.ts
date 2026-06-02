@@ -1,0 +1,161 @@
+import type { InterviewScores } from "@/components/InterviewScoreCard";
+
+const STORAGE_KEY = "toefl-speaking-local-history";
+const MAX_ENTRIES = 100;
+
+export type LocalPracticeMode = "listen_repeat" | "interview" | "mock_exam";
+
+export interface LocalListenRepeatDetail {
+  promptId: string;
+  title: string;
+  score: number;
+  scoreSummary: string;
+  feedbackSummary: string;
+}
+
+export interface LocalInterviewDetail {
+  questionId: string;
+  sessionTheme: string;
+  promptPreview: string;
+  scores: InterviewScores;
+  scoreSummary: string;
+  feedbackSummary: string;
+}
+
+export interface LocalMockExamDetail {
+  sessionId: string;
+  sessionTheme: string;
+  listenRepeat: LocalListenRepeatDetail[];
+  interview: LocalInterviewDetail[];
+  listenRepeatAvg: number;
+  interviewAvg: number;
+  overallScore: number;
+}
+
+export interface LocalHistoryEntry {
+  id: string;
+  mode: LocalPracticeMode;
+  createdAt: string;
+  title: string;
+  summary: string;
+  listenRepeatScore?: number;
+  interviewScores?: InterviewScores;
+  mockExam?: LocalMockExamDetail;
+  overallFeedback?: string;
+}
+
+function isBrowser(): boolean {
+  return typeof window !== "undefined";
+}
+
+function readAll(): LocalHistoryEntry[] {
+  if (!isBrowser()) return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed as LocalHistoryEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function writeAll(entries: LocalHistoryEntry[]): void {
+  if (!isBrowser()) return;
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(entries.slice(0, MAX_ENTRIES))
+  );
+}
+
+function newId(): string {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function getLocalHistory(): LocalHistoryEntry[] {
+  return readAll().sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+export function addLocalHistoryEntry(
+  entry: Omit<LocalHistoryEntry, "id" | "createdAt"> & {
+    id?: string;
+    createdAt?: string;
+  }
+): LocalHistoryEntry {
+  const record: LocalHistoryEntry = {
+    id: entry.id ?? newId(),
+    createdAt: entry.createdAt ?? new Date().toISOString(),
+    mode: entry.mode,
+    title: entry.title,
+    summary: entry.summary,
+    listenRepeatScore: entry.listenRepeatScore,
+    interviewScores: entry.interviewScores,
+    mockExam: entry.mockExam,
+    overallFeedback: entry.overallFeedback,
+  };
+
+  const next = [record, ...readAll()].slice(0, MAX_ENTRIES);
+  writeAll(next);
+  return record;
+}
+
+export function clearLocalHistory(): void {
+  if (!isBrowser()) return;
+  window.localStorage.removeItem(STORAGE_KEY);
+}
+
+export function interviewScoresAverage(scores: InterviewScores): number {
+  return (
+    (scores.topic + scores.pace + scores.pronunciation + scores.grammar) / 4
+  );
+}
+
+export function saveListenRepeatLocalHistory(input: {
+  promptId: string;
+  title: string;
+  score: number;
+  scoreSummary: string;
+  feedbackSummary: string;
+}): LocalHistoryEntry {
+  return addLocalHistoryEntry({
+    mode: "listen_repeat",
+    title: input.title,
+    summary: input.scoreSummary,
+    listenRepeatScore: input.score,
+    overallFeedback: input.feedbackSummary,
+  });
+}
+
+export function saveInterviewLocalHistory(input: {
+  sessionTheme: string;
+  questionId: string;
+  promptPreview: string;
+  scores: InterviewScores;
+  scoreSummary: string;
+  feedbackSummary: string;
+}): LocalHistoryEntry {
+  const avg = interviewScoresAverage(input.scores);
+  return addLocalHistoryEntry({
+    mode: "interview",
+    title: `${input.sessionTheme} · Interview`,
+    summary: input.scoreSummary,
+    interviewScores: input.scores,
+    overallFeedback: input.feedbackSummary,
+  });
+}
+
+export function saveMockExamLocalHistory(
+  detail: LocalMockExamDetail
+): LocalHistoryEntry {
+  return addLocalHistoryEntry({
+    mode: "mock_exam",
+    title: `Full Mock · ${detail.sessionTheme}`,
+    summary: `Listen & Repeat ${detail.listenRepeatAvg.toFixed(1)}/5 · Interview ${detail.interviewAvg.toFixed(1)}/5 · Overall ${detail.overallScore.toFixed(1)}/5`,
+    mockExam: detail,
+    overallFeedback: `Completed ${detail.listenRepeat.length} Listen & Repeat prompts and ${detail.interview.length} interview questions.`,
+  });
+}
