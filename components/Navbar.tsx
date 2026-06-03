@@ -7,10 +7,7 @@ import { AuthModal, type AuthMode } from "@/components/AuthModal";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
 
 const navLinks = [
-  { label: "Listen & Repeat", href: "/listen-repeat" },
-  { label: "Virtual Interview", href: "/interview" },
-  { label: "Mock Exam", href: "/mock-exam" },
-  { label: "History", href: "/history" },
+  { label: "Test Library", href: "/dashboard" },
   { label: "Growth", href: "/growth" },
 ] as const;
 

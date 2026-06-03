@@ -6,10 +6,12 @@ import type {
   AnalyzeSpeechRequest,
   AnalyzeSpeechResponse,
 } from "@/lib/analyze-speech-types";
+import type { AnalysisJobCreatedResponse } from "@/lib/analysisJobTypes";
 import type {
   PracticeHistoryQuery,
   PracticeHistoryResponse,
 } from "@/lib/history-types";
+import { pollAnalysisJob, PollAnalysisJobError } from "@/lib/pollAnalysisJob";
 import type {
   CreatePracticeSessionRequest,
   CreatePracticeSessionResponse,
@@ -93,26 +95,54 @@ async function apiRequest<T>(
   return data as T;
 }
 
-/** POST /api/analyze-speech — Listen & Repeat analysis */
-export function analyzeSpeech(
+/** POST /api/analyze-speech — submit job, poll until Listen & Repeat analysis completes */
+export async function analyzeSpeech(
   payload: AnalyzeSpeechRequest
 ): Promise<AnalyzeSpeechResponse> {
-  return apiRequest<AnalyzeSpeechResponse>("/api/analyze-speech", {
-    method: "POST",
-    body: payload,
-    fallbackError: "Speech analysis failed.",
-  });
+  try {
+    const created = await apiRequest<AnalysisJobCreatedResponse>(
+      "/api/analyze-speech",
+      {
+        method: "POST",
+        body: payload,
+        fallbackError: "Speech analysis failed.",
+      }
+    );
+
+    return await pollAnalysisJob<AnalyzeSpeechResponse>(
+      `/api/analyze-speech/jobs/${encodeURIComponent(created.jobId)}`
+    );
+  } catch (err) {
+    if (err instanceof PollAnalysisJobError) {
+      throw new ApiError(err.message, err.status, err.body);
+    }
+    throw err;
+  }
 }
 
-/** POST /api/analyze-interview — Virtual Interview analysis */
-export function analyzeInterview(
+/** POST /api/analyze-interview — submit job, poll until Virtual Interview analysis completes */
+export async function analyzeInterview(
   payload: AnalyzeInterviewRequest
 ): Promise<AnalyzeInterviewResponse> {
-  return apiRequest<AnalyzeInterviewResponse>("/api/analyze-interview", {
-    method: "POST",
-    body: payload,
-    fallbackError: "Interview analysis failed.",
-  });
+  try {
+    const created = await apiRequest<AnalysisJobCreatedResponse>(
+      "/api/analyze-interview",
+      {
+        method: "POST",
+        body: payload,
+        fallbackError: "Interview analysis failed.",
+      }
+    );
+
+    return await pollAnalysisJob<AnalyzeInterviewResponse>(
+      `/api/analyze-interview/jobs/${encodeURIComponent(created.jobId)}`
+    );
+  } catch (err) {
+    if (err instanceof PollAnalysisJobError) {
+      throw new ApiError(err.message, err.status, err.body);
+    }
+    throw err;
+  }
 }
 
 /** POST /api/session — create a practice session */

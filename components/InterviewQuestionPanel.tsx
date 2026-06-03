@@ -44,11 +44,12 @@ export function InterviewQuestionPanel({
   const revealText = !examMode && showQuestionText;
 
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`${examMode ? "space-y-3" : "space-y-4"} ${className}`}>
       {showExaminerImage && (
         <ExamVisualPanel
           variant="examiner"
           topicImageUrl={EXAMINER_IMAGE_URL}
+          compact={examMode}
         />
       )}
 
@@ -61,31 +62,39 @@ export function InterviewQuestionPanel({
         />
       )}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section
+        className={`rounded-xl border border-slate-200 bg-white shadow-sm ${
+          examMode ? "p-4" : "p-5 sm:p-6"
+        }`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-slate-900">
-            {examMode ? "Question audio" : "Interview question"}
+            {examMode ? `Interview · Q${question.sequence}/4` : "Interview question"}
           </h2>
-          <span className="text-xs text-slate-500">
-            {question.taskLabel} · {question.responseSeconds}s response
-          </span>
+          {!examMode && (
+            <span className="text-xs text-slate-500">
+              {question.taskLabel} · {question.responseSeconds}s response
+            </span>
+          )}
         </div>
 
         {examMode && (
-          <p className="mt-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
-            Question text is hidden — use Play question audio, as on the official
-            TOEFL Virtual Interview.
+          <p className="mt-1 text-xs text-slate-500">
+            Listen to the question — text hidden, as on the real test
           </p>
         )}
 
         <PromptAudioPlayer
           text={question.prompt}
-          audioSrc={questionAudioSrc}
+          speechKind="interview"
+          speechId={question.id}
+          audioSrc={questionAudioSrc ?? `/audio/interview/${question.id}.mp3`}
           label="Play question audio"
           autoPlay={autoPlayQuestion}
+          examMode={examMode}
           disabled={disabled}
           onEnded={onQuestionAudioEnded}
-          className="mt-4"
+          className={examMode ? "mt-3" : "mt-4"}
         />
 
         {revealText && (

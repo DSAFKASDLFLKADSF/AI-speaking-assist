@@ -69,7 +69,24 @@ export class PythonSpeechApiError extends Error {
   }
 }
 
-function getPythonApiConfig() {
+export type PythonJobStatus = "pending" | "running" | "done" | "failed";
+
+export interface PythonJobStatusResponse {
+  job_id: string;
+  kind: "listen_repeat" | "interview";
+  status: PythonJobStatus;
+  error?: string | null;
+  result?: PythonAnalyzeSpeechResponse | PythonAnalyzeInterviewResponse | null;
+  client_result?: Record<string, unknown> | null;
+  request?: Record<string, unknown> | null;
+}
+
+export interface PythonJobCreatedResponse {
+  job_id: string;
+  status: "pending";
+}
+
+function getPythonApiConfig(options?: { timeoutMs?: number }) {
   const baseUrl = process.env.PYTHON_SPEECH_API_URL?.trim();
   if (!baseUrl) {
     throw new Error(
@@ -80,7 +97,9 @@ function getPythonApiConfig() {
   return {
     baseUrl: baseUrl.replace(/\/$/, ""),
     apiKey: process.env.PYTHON_SPEECH_API_KEY?.trim(),
-    timeoutMs: Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 120_000),
+    timeoutMs:
+      options?.timeoutMs ??
+      Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 300_000),
   };
 }
 
@@ -88,27 +107,35 @@ async function callPythonApi<T>(
   path: string,
   payload: unknown,
   validate: (data: T) => boolean,
-  invalidMessage: string
+  invalidMessage: string,
+  options?: { method?: "GET" | "POST" | "PUT"; timeoutMs?: number }
 ): Promise<T> {
-  const { baseUrl, apiKey, timeoutMs } = getPythonApiConfig();
+  const { baseUrl, apiKey, timeoutMs } = getPythonApiConfig(options);
+  const method = options?.method ?? "POST";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
       Accept: "application/json",
     };
+    if (method !== "GET") {
+      headers["Content-Type"] = "application/json";
+    }
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const response = await fetch(`${baseUrl}${path}`, {
-      method: "POST",
+      method,
       headers,
-      body: JSON.stringify(payload),
+      body: method === "GET" ? undefined : JSON.stringify(payload),
       signal: controller.signal,
     });
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
 
     const data = (await response.json().catch(() => ({}))) as
       | T
@@ -123,7 +150,7 @@ async function callPythonApi<T>(
       throw new PythonSpeechApiError(message, response.status);
     }
 
-    if (!validate(data as T)) {
+    if (validate && !validate(data as T)) {
       throw new PythonSpeechApiError(invalidMessage, 502);
     }
 
@@ -131,7 +158,10 @@ async function callPythonApi<T>(
   } catch (err) {
     if (err instanceof PythonSpeechApiError) throw err;
     if (err instanceof Error && err.name === "AbortError") {
-      throw new PythonSpeechApiError("Python API request timed out.", 504);
+      throw new PythonSpeechApiError(
+        `Python API request timed out after ${Math.round(timeoutMs / 1000)}s.`,
+        504
+      );
     }
     const message =
       err instanceof Error ? err.message : "Failed to reach Python API.";
@@ -147,6 +177,62 @@ async function callPythonApi<T>(
   }
 }
 
+const JOB_SUBMIT_TIMEOUT_MS = 30_000;
+const JOB_POLL_TIMEOUT_MS = 15_000;
+
+/** POST /jobs/listen-repeat — returns immediately with job_id */
+export async function createPythonListenRepeatJob(
+  payload: PythonAnalyzeSpeechRequest
+): Promise<PythonJobCreatedResponse> {
+  return callPythonApi<PythonJobCreatedResponse>(
+    "/jobs/listen-repeat",
+    payload,
+    (data) => Boolean((data as PythonJobCreatedResponse).job_id),
+    "Python API returned an invalid job payload.",
+    { timeoutMs: JOB_SUBMIT_TIMEOUT_MS }
+  );
+}
+
+/** POST /jobs/interview — returns immediately with job_id */
+export async function createPythonInterviewJob(
+  payload: PythonAnalyzeInterviewRequest
+): Promise<PythonJobCreatedResponse> {
+  return callPythonApi<PythonJobCreatedResponse>(
+    "/jobs/interview",
+    payload,
+    (data) => Boolean((data as PythonJobCreatedResponse).job_id),
+    "Python API returned an invalid job payload.",
+    { timeoutMs: JOB_SUBMIT_TIMEOUT_MS }
+  );
+}
+
+/** GET /jobs/{job_id} */
+export async function getPythonJobStatus(
+  jobId: string
+): Promise<PythonJobStatusResponse> {
+  return callPythonApi<PythonJobStatusResponse>(
+    `/jobs/${encodeURIComponent(jobId)}`,
+    {},
+    (data) => Boolean((data as PythonJobStatusResponse).job_id),
+    "Python API returned an invalid job status payload.",
+    { method: "GET", timeoutMs: JOB_POLL_TIMEOUT_MS }
+  );
+}
+
+/** PUT /jobs/{job_id}/client-result — cache finalized Next.js response */
+export async function setPythonJobClientResult(
+  jobId: string,
+  clientResult: unknown
+): Promise<void> {
+  await callPythonApi<void>(
+    `/jobs/${encodeURIComponent(jobId)}/client-result`,
+    { client_result: clientResult },
+    () => true,
+    "",
+    { method: "PUT", timeoutMs: JOB_POLL_TIMEOUT_MS }
+  );
+}
+
 /**
  * Call the Python Listen & Repeat analysis endpoint.
  * Expected Python route: POST {PYTHON_SPEECH_API_URL}/analyze/listen-repeat
@@ -157,8 +243,9 @@ export async function callPythonAnalyzeSpeech(
   return callPythonApi<PythonAnalyzeSpeechResponse>(
     "/analyze/listen-repeat",
     payload,
-    (data) => Boolean(data.transcript),
-    "Python API returned an invalid payload (missing transcript)."
+    (data) => Boolean((data as PythonAnalyzeSpeechResponse).transcript),
+    "Python API returned an invalid payload (missing transcript).",
+    { timeoutMs: Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 300_000) }
   );
 }
 
@@ -172,7 +259,12 @@ export async function callPythonAnalyzeInterview(
   return callPythonApi<PythonAnalyzeInterviewResponse>(
     "/analyze/interview",
     payload,
-    (data) => Boolean(data.transcript && data.scores),
-    "Python API returned an invalid interview payload."
+    (data) =>
+      Boolean(
+        (data as PythonAnalyzeInterviewResponse).transcript &&
+          (data as PythonAnalyzeInterviewResponse).scores
+      ),
+    "Python API returned an invalid interview payload.",
+    { timeoutMs: Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 300_000) }
   );
 }

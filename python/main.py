@@ -7,8 +7,11 @@ Run locally:
   uvicorn main:app --reload --port 8000
 
 Next.js expects:
-  POST /analyze/listen-repeat
-  POST /analyze/interview
+  POST /jobs/listen-repeat  → { job_id, status }
+  POST /jobs/interview      → { job_id, status }
+  GET  /jobs/{job_id}       → poll status / result
+  POST /analyze/listen-repeat  (sync, backward compatible)
+  POST /analyze/interview      (sync, backward compatible)
 """
 
 from __future__ import annotations
@@ -20,8 +23,9 @@ import sys
 from typing import Annotated, Literal
 
 import requests
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import AliasChoices, BaseModel, Field, HttpUrl, ValidationError
 from pydantic_settings import BaseSettings
 
@@ -43,6 +47,8 @@ from whisper_transcribe import (
     WhisperTranscriptionError,
     whisper_transcribe,
 )
+from neural_tts import DEFAULT_RATE, DEFAULT_VOICE, synthesize_cached
+from analysis_jobs import AnalysisJob, job_store
 
 # ---------------------------------------------------------------------------
 # Config
@@ -216,6 +222,25 @@ class InterviewResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     service: str = "ai-speaking-trainer-python"
+
+
+class JobCreatedResponse(BaseModel):
+    job_id: str
+    status: Literal["pending"] = "pending"
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    kind: Literal["listen_repeat", "interview"]
+    status: Literal["pending", "running", "done", "failed"]
+    error: str | None = None
+    result: dict | None = None
+    client_result: dict | None = None
+    request: dict | None = None
+
+
+class JobClientResultRequest(BaseModel):
+    client_result: dict
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +579,269 @@ def on_startup() -> None:
     logger.info("Service auth configured: %s", bool(settings.api_key))
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
+jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+async def run_listen_repeat_analysis(body: ListenRepeatRequest) -> ListenRepeatResponse:
+    audio_bytes, content_type, file_size = await fetch_audio(str(body.audio_url))
+
+    transcription = await transcribe_audio(
+        audio_bytes, content_type, audio_url=str(body.audio_url)
+    )
+    transcript = transcription.transcript.strip()
+
+    if not transcript:
+        if not is_transcription_configured():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Listen & Repeat requires real speech transcription. "
+                    "Set ASSEMBLYAI_API_KEY in python/.env, then restart the Python service."
+                ),
+            )
+        raise HTTPException(status_code=422, detail="Empty transcript.")
+
+    features = await analyze_audio(
+        audio_bytes,
+        transcript,
+        whisper_words=transcription.words,
+        content_type=content_type,
+    )
+    words_raw = build_word_comparison(body.reference_text, transcript)
+    word_stats = word_stats_from_comparison(words_raw)
+
+    try:
+        score_prompt = get_toefl_score_prompt(
+            task="listen_repeat",
+            transcript=transcript,
+            reference_text=body.reference_text,
+            prompt_id=body.prompt_id,
+            metrics=features_to_dict(features),
+            word_stats=word_stats,
+        )
+    except ValueError as exc:
+        logger.warning("Invalid listen-repeat scoring prompt: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    scores, feedback_raw, score_summary, glm_model = await score_with_glm(score_prompt)
+    feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
+    glm_score = scores.get("score", 1)
+    rule_score = compute_listen_repeat_score(words_raw)
+    score = min(glm_score, rule_score)
+    if rule_score < glm_score:
+        logger.info(
+            "Listen-repeat score capped by word alignment: glm=%s rule=%s final=%s",
+            glm_score,
+            rule_score,
+            score,
+        )
+    delivery, language, topic = listen_repeat_to_ets(score)
+
+    return ListenRepeatResponse(
+        transcript=transcript,
+        score=score,
+        score_summary=score_summary,
+        words=[ComparisonWord(**w) for w in words_raw],
+        feedback=FeedbackBlock(**feedback_raw),
+        duration_seconds=features.duration_seconds,
+        mime_type=content_type,
+        file_size_bytes=file_size,
+        delivery_score=delivery,
+        language_use_score=language,
+        topic_development_score=topic,
+        model=f"{transcription.model}+{glm_model}",
+    )
+
+
+async def run_interview_analysis(body: InterviewRequest) -> InterviewResponse:
+    audio_bytes, content_type, _file_size = await fetch_audio(str(body.audio_url))
+    transcription = await transcribe_audio(
+        audio_bytes, content_type, audio_url=str(body.audio_url)
+    )
+    transcript = transcription.transcript.strip()
+
+    if not transcript:
+        if not is_transcription_configured():
+            if settings.dev_echo_reference:
+                transcript = f"[dev] Response to: {body.prompt[:120]}"
+                transcription = WhisperTranscription(
+                    transcript=transcript,
+                    words=[],
+                    model="dev-echo-reference",
+                )
+                logger.warning(
+                    "Using dev_echo_reference transcript for interview (no AssemblyAI/Whisper)"
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Virtual Interview requires speech transcription. "
+                        "Set ASSEMBLYAI_API_KEY in python/.env, then restart the Python service."
+                    ),
+                )
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="Empty transcript. Speak clearly and try recording again.",
+            )
+
+    features = await analyze_audio(
+        audio_bytes,
+        transcript,
+        whisper_words=transcription.words,
+        content_type=content_type,
+        duration_hint=body.duration_ms / 1000 if body.duration_ms > 0 else None,
+    )
+    if body.duration_ms > 0:
+        duration_seconds = round(body.duration_ms / 1000, 2)
+        duration_min = max(duration_seconds / 60, 1 / 60)
+        wpm = (
+            round(features.word_count / duration_min, 1)
+            if features.word_count
+            else 0.0
+        )
+        features = AudioFeatures(
+            wpm=wpm,
+            pause_count=features.pause_count,
+            longest_pause=features.longest_pause,
+            filler_count=features.filler_count,
+            duration_seconds=duration_seconds,
+            word_count=features.word_count,
+        )
+
+    try:
+        score_prompt = get_toefl_score_prompt(
+            task="interview",
+            transcript=transcript,
+            question=body.prompt,
+            prompt_id=body.question_id,
+            response_seconds=body.response_seconds,
+            metrics=features_to_dict(features),
+        )
+    except ValueError as exc:
+        logger.warning("Invalid interview scoring prompt: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    scores_raw, feedback_raw, score_summary, glm_model = await score_with_glm(
+        score_prompt
+    )
+    feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
+
+    return InterviewResponse(
+        transcript=transcript,
+        scores=InterviewScores(
+            topic=scores_raw.get("topic", 1),
+            pace=scores_raw.get("pace", 1),
+            pronunciation=scores_raw.get("pronunciation", 1),
+            grammar=scores_raw.get("grammar", 1),
+        ),
+        score_summary=score_summary,
+        metrics=features_to_metrics(features),
+        feedback=FeedbackBlock(**feedback_raw),
+        model=f"{transcription.model}+{glm_model}",
+    )
+
+
+def job_to_status_response(job: AnalysisJob) -> JobStatusResponse:
+    return JobStatusResponse(
+        job_id=job.id,
+        kind=job.kind,
+        status=job.status,
+        error=job.error,
+        result=job.result,
+        client_result=job.client_result,
+        request=job.request,
+    )
+
+
+async def _run_listen_repeat_job(job_id: str, body: ListenRepeatRequest) -> None:
+    await job_store.mark_running(job_id)
+    try:
+        response = await run_listen_repeat_analysis(body)
+        await job_store.mark_done(job_id, response.model_dump())
+        logger.info("Job %s listen-repeat done score=%s", job_id, response.score)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        await job_store.mark_failed(job_id, detail)
+        logger.error("Job %s listen-repeat failed: %s", job_id, detail)
+    except ValidationError as exc:
+        await job_store.mark_failed(job_id, "Invalid analysis result.")
+        logger.warning("Job %s listen-repeat validation failed: %s", job_id, exc)
+    except Exception as exc:
+        await job_store.mark_failed(job_id, "Internal analysis error. Please try again later.")
+        logger.exception("Job %s listen-repeat unexpected error", job_id, exc_info=exc)
+
+
+async def _run_interview_job(job_id: str, body: InterviewRequest) -> None:
+    await job_store.mark_running(job_id)
+    try:
+        response = await run_interview_analysis(body)
+        await job_store.mark_done(job_id, response.model_dump())
+        logger.info("Job %s interview done scores=%s", job_id, response.scores.model_dump())
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        await job_store.mark_failed(job_id, detail)
+        logger.error("Job %s interview failed: %s", job_id, detail)
+    except ValidationError as exc:
+        await job_store.mark_failed(job_id, "Invalid analysis result.")
+        logger.warning("Job %s interview validation failed: %s", job_id, exc)
+    except Exception as exc:
+        await job_store.mark_failed(job_id, "Internal analysis error. Please try again later.")
+        logger.exception("Job %s interview unexpected error", job_id, exc_info=exc)
+
+
+@jobs_router.post("/listen-repeat", response_model=JobCreatedResponse, status_code=202)
+async def create_listen_repeat_job(
+    body: ListenRepeatRequest,
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> JobCreatedResponse:
+    logger.info(
+        "POST /jobs/listen-repeat prompt_id=%s reference_len=%s",
+        body.prompt_id,
+        len(body.reference_text),
+    )
+    job = await job_store.create("listen_repeat", body.model_dump(mode="json"))
+    asyncio.create_task(_run_listen_repeat_job(job.id, body))
+    return JobCreatedResponse(job_id=job.id)
+
+
+@jobs_router.post("/interview", response_model=JobCreatedResponse, status_code=202)
+async def create_interview_job(
+    body: InterviewRequest,
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> JobCreatedResponse:
+    logger.info(
+        "POST /jobs/interview question_id=%s prompt_len=%s duration_ms=%s",
+        body.question_id,
+        len(body.prompt),
+        body.duration_ms,
+    )
+    job = await job_store.create("interview", body.model_dump(mode="json"))
+    asyncio.create_task(_run_interview_job(job.id, body))
+    return JobCreatedResponse(job_id=job.id)
+
+
+@jobs_router.get("/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(
+    job_id: str,
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> JobStatusResponse:
+    job = await job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job_to_status_response(job)
+
+
+@jobs_router.put("/{job_id}/client-result", status_code=204)
+async def set_job_client_result(
+    job_id: str,
+    body: JobClientResultRequest,
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> None:
+    updated = await job_store.set_client_result(job_id, body.client_result)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Job not found.")
 
 
 @router.post("/listen-repeat", response_model=ListenRepeatResponse)
@@ -567,77 +855,10 @@ async def analyze_listen_repeat(
         len(body.reference_text),
     )
     try:
-        audio_bytes, content_type, file_size = await fetch_audio(str(body.audio_url))
-
-        transcription = await transcribe_audio(
-            audio_bytes, content_type, audio_url=str(body.audio_url)
-        )
-        transcript = transcription.transcript.strip()
-
-        if not transcript:
-            if not is_transcription_configured():
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Listen & Repeat requires real speech transcription. "
-                        "Set ASSEMBLYAI_API_KEY in python/.env, then restart the Python service."
-                    ),
-                )
-            raise HTTPException(status_code=422, detail="Empty transcript.")
-
-        features = await analyze_audio(
-            audio_bytes,
-            transcript,
-            whisper_words=transcription.words,
-            content_type=content_type,
-        )
-        words_raw = build_word_comparison(body.reference_text, transcript)
-        word_stats = word_stats_from_comparison(words_raw)
-
-        try:
-            score_prompt = get_toefl_score_prompt(
-                task="listen_repeat",
-                transcript=transcript,
-                reference_text=body.reference_text,
-                prompt_id=body.prompt_id,
-                metrics=features_to_dict(features),
-                word_stats=word_stats,
-            )
-        except ValueError as exc:
-            logger.warning("Invalid listen-repeat scoring prompt: %s", exc)
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        scores, feedback_raw, score_summary, glm_model = await score_with_glm(score_prompt)
-        feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
-        glm_score = scores.get("score", 1)
-        rule_score = compute_listen_repeat_score(words_raw)
-        score = min(glm_score, rule_score)
-        if rule_score < glm_score:
-            logger.info(
-                "Listen-repeat score capped by word alignment: glm=%s rule=%s final=%s",
-                glm_score,
-                rule_score,
-                score,
-            )
-        delivery, language, topic = listen_repeat_to_ets(score)
-
-        response = ListenRepeatResponse(
-            transcript=transcript,
-            score=score,
-            score_summary=score_summary,
-            words=[ComparisonWord(**w) for w in words_raw],
-            feedback=FeedbackBlock(**feedback_raw),
-            duration_seconds=features.duration_seconds,
-            mime_type=content_type,
-            file_size_bytes=file_size,
-            delivery_score=delivery,
-            language_use_score=language,
-            topic_development_score=topic,
-            model=f"{transcription.model}+{glm_model}",
-        )
+        response = await run_listen_repeat_analysis(body)
         logger.info(
             "POST /analyze/listen-repeat done score=%s model=%s",
-            score,
+            response.score,
             response.model,
         )
         return response
@@ -662,93 +883,7 @@ async def analyze_interview(
         body.duration_ms,
     )
     try:
-        audio_bytes, content_type, _file_size = await fetch_audio(str(body.audio_url))
-        transcription = await transcribe_audio(
-            audio_bytes, content_type, audio_url=str(body.audio_url)
-        )
-        transcript = transcription.transcript.strip()
-
-        if not transcript:
-            if not is_transcription_configured():
-                if settings.dev_echo_reference:
-                    transcript = f"[dev] Response to: {body.prompt[:120]}"
-                    transcription = WhisperTranscription(
-                        transcript=transcript,
-                        words=[],
-                        model="dev-echo-reference",
-                    )
-                    logger.warning(
-                        "Using dev_echo_reference transcript for interview (no AssemblyAI/Whisper)"
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=503,
-                        detail=(
-                            "Virtual Interview requires speech transcription. "
-                            "Set ASSEMBLYAI_API_KEY in python/.env, then restart the Python service."
-                        ),
-                    )
-            else:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Empty transcript. Speak clearly and try recording again.",
-                )
-
-        features = await analyze_audio(
-            audio_bytes,
-            transcript,
-            whisper_words=transcription.words,
-            content_type=content_type,
-            duration_hint=body.duration_ms / 1000 if body.duration_ms > 0 else None,
-        )
-        if body.duration_ms > 0:
-            duration_seconds = round(body.duration_ms / 1000, 2)
-            duration_min = max(duration_seconds / 60, 1 / 60)
-            wpm = (
-                round(features.word_count / duration_min, 1)
-                if features.word_count
-                else 0.0
-            )
-            features = AudioFeatures(
-                wpm=wpm,
-                pause_count=features.pause_count,
-                longest_pause=features.longest_pause,
-                filler_count=features.filler_count,
-                duration_seconds=duration_seconds,
-                word_count=features.word_count,
-            )
-
-        try:
-            score_prompt = get_toefl_score_prompt(
-                task="interview",
-                transcript=transcript,
-                question=body.prompt,
-                prompt_id=body.question_id,
-                response_seconds=body.response_seconds,
-                metrics=features_to_dict(features),
-            )
-        except ValueError as exc:
-            logger.warning("Invalid interview scoring prompt: %s", exc)
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        scores_raw, feedback_raw, score_summary, glm_model = await score_with_glm(
-            score_prompt
-        )
-        feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
-
-        response = InterviewResponse(
-            transcript=transcript,
-            scores=InterviewScores(
-                topic=scores_raw.get("topic", 1),
-                pace=scores_raw.get("pace", 1),
-                pronunciation=scores_raw.get("pronunciation", 1),
-                grammar=scores_raw.get("grammar", 1),
-            ),
-            score_summary=score_summary,
-            metrics=features_to_metrics(features),
-            feedback=FeedbackBlock(**feedback_raw),
-            model=f"{transcription.model}+{glm_model}",
-        )
+        response = await run_interview_analysis(body)
         logger.info(
             "POST /analyze/interview done scores=%s model=%s",
             response.scores.model_dump(),
@@ -765,6 +900,38 @@ async def analyze_interview(
 
 
 app.include_router(router)
+app.include_router(jobs_router)
+
+tts_router = APIRouter(prefix="/synthesize", tags=["synthesize"])
+
+
+@tts_router.get("/speech")
+async def synthesize_speech(
+    text: str = Query(..., min_length=1, max_length=5000),
+    voice: str = Query(default=DEFAULT_VOICE),
+    rate: str = Query(default=DEFAULT_RATE),
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> FileResponse:
+    """Neural English TTS (Microsoft Edge voices) — TOEFL-style prompt audio."""
+    try:
+        path = await synthesize_cached(text.strip(), voice=voice, rate=rate)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("TTS synthesis failed")
+        raise HTTPException(status_code=500, detail="Speech synthesis failed.") from exc
+
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        filename="speech.mp3",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+app.include_router(tts_router)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -777,7 +944,15 @@ def root() -> dict:
     return {
         "service": "ai-speaking-trainer-python",
         "docs": "/docs",
-        "endpoints": ["/analyze/listen-repeat", "/analyze/interview", "/health"],
+        "endpoints": [
+            "/jobs/listen-repeat",
+            "/jobs/interview",
+            "/jobs/{job_id}",
+            "/analyze/listen-repeat",
+            "/analyze/interview",
+            "/synthesize/speech",
+            "/health",
+        ],
     }
 
 

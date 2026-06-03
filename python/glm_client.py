@@ -23,7 +23,7 @@ from toefl_rubric import ToeflScorePrompt
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
-DEFAULT_MODEL = "glm-4.7-flash"
+DEFAULT_MODEL = "glm-4.7"
 DEFAULT_TIMEOUT = 60.0
 
 INTERVIEW_SCORE_KEYS = ("topic", "pace", "pronunciation", "grammar")

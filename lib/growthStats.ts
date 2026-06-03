@@ -1,8 +1,5 @@
 import type { InterviewScores } from "@/components/InterviewScoreCard";
-import {
-  interviewScoresAverage,
-  type LocalPracticeMode,
-} from "@/lib/localHistory";
+import type { LocalPracticeMode } from "@/lib/localHistory";
 import {
   interviewScoresFromCloud,
   mergeUnifiedHistory,

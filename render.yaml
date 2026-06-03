@@ -26,7 +26,15 @@ services:
       - key: ZHIPU_API_KEY
         sync: false
 
-      # --- Whisper transcription (OpenAI / relay — separate from Zhipu) ---
+      # --- AssemblyAI transcription (primary — used by Listen & Repeat + Interview) ---
+      - key: ASSEMBLYAI_API_KEY
+        sync: false
+      - key: ASSEMBLYAI_BASE_URL
+        value: https://api.assemblyai.com
+      - key: ASSEMBLYAI_SPEECH_MODELS
+        value: universal-2
+
+      # --- Whisper transcription (fallback — only if AssemblyAI not set) ---
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_BASE_URL
@@ -38,7 +46,7 @@ services:
       - key: GLM_BASE_URL
         value: https://open.bigmodel.cn/api/paas/v4
       - key: MODEL_NAME
-        value: glm-4.7-flash
+        value: glm-4.7
 
       # --- Service auth (Next.js → Python Bearer token) ---
       - key: PYTHON_SPEECH_API_KEY

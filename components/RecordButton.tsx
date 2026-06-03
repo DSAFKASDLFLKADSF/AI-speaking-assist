@@ -27,6 +27,10 @@ export interface RecordButtonProps {
   startSignal?: number;
   /** Increment to programmatically stop when recording */
   stopSignal?: number;
+  /** Hide manual start/stop — exam automation only */
+  hideControls?: boolean;
+  /** Called when mic stream is live (for level meters) */
+  onStreamReady?: (stream: MediaStream | null) => void;
   className?: string;
 }
 
@@ -69,6 +73,8 @@ export function RecordButton({
   disabled = false,
   startSignal = 0,
   stopSignal = 0,
+  hideControls = false,
+  onStreamReady,
   className = "",
 }: RecordButtonProps) {
   const [status, setStatus] = useState<RecordingStatus>("idle");
@@ -92,7 +98,8 @@ export function RecordButton({
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-  }, []);
+    onStreamReady?.(null);
+  }, [onStreamReady]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -132,6 +139,7 @@ export function RecordButton({
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+      onStreamReady?.(stream);
       chunksRef.current = [];
 
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -186,6 +194,7 @@ export function RecordButton({
     onRecordingStart,
     onRecordingStop,
     onRecordingComplete,
+    onStreamReady,
     handleError,
     clearTimer,
     stopStream,
@@ -248,39 +257,53 @@ export function RecordButton({
 
   return (
     <div className={`flex flex-col items-center gap-3 ${className}`}>
-      <button
-        type="button"
-        onClick={handleToggle}
-        disabled={isBusy}
-        aria-label={isRecording ? "Stop recording" : "Start recording"}
-        aria-pressed={isRecording}
-        className={`flex items-center gap-2 rounded-full px-6 py-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-          isRecording
-            ? "bg-red-600 text-white hover:bg-red-700"
-            : "bg-slate-900 text-white hover:bg-slate-800"
-        }`}
-      >
-        <span
-          className={`h-2.5 w-2.5 rounded-full ${
-            isRecording ? "animate-pulse bg-white" : "bg-red-400"
+      {!hideControls ? (
+        <button
+          type="button"
+          onClick={handleToggle}
+          disabled={isBusy}
+          aria-label={isRecording ? "Stop recording" : "Start recording"}
+          aria-pressed={isRecording}
+          className={`flex items-center gap-2 rounded-full px-6 py-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            isRecording
+              ? "bg-red-600 text-white hover:bg-red-700"
+              : "bg-slate-900 text-white hover:bg-slate-800"
           }`}
-        />
-        {isRecording ? "Stop Recording" : "Start Recording"}
-      </button>
+        >
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              isRecording ? "animate-pulse bg-white" : "bg-red-400"
+            }`}
+          />
+          {isRecording ? "Stop Recording" : "Start Recording"}
+        </button>
+      ) : isRecording ? (
+        <div className="flex items-center gap-2 rounded-full bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-600" />
+          Recording…
+        </div>
+      ) : status === "requesting" ? (
+        <p className="text-xs text-slate-500">Preparing microphone…</p>
+      ) : null}
 
-      <div className="text-center" role="status" aria-live="polite">
-        <p className="text-xs text-slate-500">
-          {STATUS_LABEL[status]}
-          {isRecording && (
-            <span className="ml-1 font-mono text-slate-700">
-              {formatDuration(elapsedMs)}
-            </span>
+      {!hideControls && (
+        <div className="text-center" role="status" aria-live="polite">
+          <p className="text-xs text-slate-500">
+            {STATUS_LABEL[status]}
+            {isRecording && (
+              <span className="ml-1 font-mono text-slate-700">
+                {formatDuration(elapsedMs)}
+              </span>
+            )}
+          </p>
+          {errorMessage && (
+            <p className="mt-1 text-xs text-red-600">{errorMessage}</p>
           )}
-        </p>
-        {errorMessage && (
-          <p className="mt-1 text-xs text-red-600">{errorMessage}</p>
-        )}
-      </div>
+        </div>
+      )}
+      {hideControls && errorMessage && (
+        <p className="text-xs text-red-600">{errorMessage}</p>
+      )}
     </div>
   );
 }

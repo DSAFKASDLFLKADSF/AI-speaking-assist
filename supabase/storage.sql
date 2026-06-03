@@ -11,7 +11,7 @@ VALUES (
   'audio-responses',
   false,
   52428800,
-  ARRAY['audio/webm', 'audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg']
+  ARRAY['audio/webm', 'audio/webm;codecs=opus', 'audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/ogg;codecs=opus']
 )
 ON CONFLICT (id) DO UPDATE SET
   file_size_limit = EXCLUDED.file_size_limit,

@@ -38,11 +38,17 @@ export interface LocalHistoryEntry {
   createdAt: string;
   title: string;
   summary: string;
+  testSetId?: string;
+  examMode?: TestExamMode;
+  promptId?: string;
+  questionId?: string;
   listenRepeatScore?: number;
   interviewScores?: InterviewScores;
   mockExam?: LocalMockExamDetail;
   overallFeedback?: string;
 }
+
+export type TestExamMode = "full" | "listen_repeat" | "interview";
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
@@ -92,10 +98,14 @@ export function addLocalHistoryEntry(
     mode: entry.mode,
     title: entry.title,
     summary: entry.summary,
+    testSetId: entry.testSetId,
+    examMode: entry.examMode,
     listenRepeatScore: entry.listenRepeatScore,
     interviewScores: entry.interviewScores,
     mockExam: entry.mockExam,
     overallFeedback: entry.overallFeedback,
+    promptId: entry.promptId,
+    questionId: entry.questionId,
   };
 
   const next = [record, ...readAll()].slice(0, MAX_ENTRIES);
@@ -125,6 +135,7 @@ export function saveListenRepeatLocalHistory(input: {
     mode: "listen_repeat",
     title: input.title,
     summary: input.scoreSummary,
+    promptId: input.promptId,
     listenRepeatScore: input.score,
     overallFeedback: input.feedbackSummary,
   });
@@ -138,24 +149,31 @@ export function saveInterviewLocalHistory(input: {
   scoreSummary: string;
   feedbackSummary: string;
 }): LocalHistoryEntry {
-  const avg = interviewScoresAverage(input.scores);
   return addLocalHistoryEntry({
     mode: "interview",
     title: `${input.sessionTheme} · Interview`,
     summary: input.scoreSummary,
+    questionId: input.questionId,
     interviewScores: input.scores,
     overallFeedback: input.feedbackSummary,
   });
 }
 
 export function saveMockExamLocalHistory(
-  detail: LocalMockExamDetail
+  detail: LocalMockExamDetail,
+  meta?: { testSetId?: string; examMode?: TestExamMode; title?: string }
 ): LocalHistoryEntry {
   return addLocalHistoryEntry({
     mode: "mock_exam",
-    title: `Full Mock · ${detail.sessionTheme}`,
+    testSetId: meta?.testSetId,
+    examMode: meta?.examMode ?? "full",
+    title: meta?.title ?? `Full Mock · ${detail.sessionTheme}`,
     summary: `Listen & Repeat ${detail.listenRepeatAvg.toFixed(1)}/5 · Interview ${detail.interviewAvg.toFixed(1)}/5 · Overall ${detail.overallScore.toFixed(1)}/5`,
     mockExam: detail,
     overallFeedback: `Completed ${detail.listenRepeat.length} Listen & Repeat prompts and ${detail.interview.length} interview questions.`,
   });
+}
+
+export function getHistoryForTestSet(testSetId: string): LocalHistoryEntry[] {
+  return getLocalHistory().filter((e) => e.testSetId === testSetId);
 }

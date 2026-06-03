@@ -3,12 +3,14 @@
 import { ExamVisualPanel } from "@/components/ExamVisualPanel";
 import { PromptPlayer } from "@/components/PromptPlayer";
 import type { ListenRepeatPrompt } from "@/lib/prompts";
-import { getTopicImageUrl } from "@/lib/visualAssets";
+import { getListenRepeatSceneVisual } from "@/lib/visualAssets";
 
 export interface ListenRepeatVisualPanelProps {
   prompt: ListenRepeatPrompt;
   examMode: boolean;
   showTranscript: boolean;
+  autoPlay?: boolean;
+  onAudioEnded?: () => void;
   className?: string;
 }
 
@@ -16,31 +18,60 @@ export function ListenRepeatVisualPanel({
   prompt,
   examMode,
   showTranscript,
+  autoPlay = examMode,
+  onAudioEnded,
   className = "",
 }: ListenRepeatVisualPanelProps) {
+  const scene = getListenRepeatSceneVisual(prompt.setId, prompt.sentenceIndex);
+
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`${examMode ? "space-y-3" : "space-y-4"} ${className}`}>
       <ExamVisualPanel
         variant="topic"
-        topicImageUrl={getTopicImageUrl(prompt.topic)}
-        topicLabel={prompt.topic}
-        themeLabel={prompt.title}
+        topicImageUrl={scene.topicImageUrl}
+        topicLabel={scene.sceneLabel}
+        themeLabel={examMode ? prompt.scenario : prompt.title}
+        compact={examMode}
       />
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-          Listen & Repeat · {examMode ? "Section mock" : "Practice"}
-        </p>
+      <section
+        className={`rounded-xl border border-slate-200 bg-white shadow-sm ${
+          examMode ? "p-4" : "p-5 sm:p-6"
+        }`}
+      >
         {examMode && (
-          <p className="mt-2 text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
-            Transcript hidden during the run — listen to the model audio only.
+          <p className="text-xs font-medium text-slate-600">
+            Listen & Repeat · Q{prompt.sentenceIndex}/7 — listen once, then repeat
           </p>
         )}
-        <PromptPlayer
-          prompt={prompt}
-          showTranscript={!examMode && showTranscript}
-          className="mt-4"
-        />
+        {!examMode && showTranscript && (
+          <PromptPlayer
+            prompt={prompt}
+            showTranscript
+            autoPlay={autoPlay}
+            examMode={examMode}
+            onEnded={onAudioEnded}
+          />
+        )}
+        {examMode && (
+          <PromptPlayer
+            prompt={prompt}
+            showTranscript={false}
+            autoPlay={autoPlay}
+            examMode
+            onEnded={onAudioEnded}
+            className="mt-3"
+          />
+        )}
+        {!examMode && !showTranscript && (
+          <PromptPlayer
+            prompt={prompt}
+            showTranscript={false}
+            autoPlay={autoPlay}
+            examMode={examMode}
+            onEnded={onAudioEnded}
+          />
+        )}
       </section>
     </div>
   );

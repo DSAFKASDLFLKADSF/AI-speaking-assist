@@ -1,39 +1,60 @@
 import {
-  getRandomInterviewSession,
+  getOfficialSpeakingSetById,
+  getRandomOfficialSpeakingSet,
+  OFFICIAL_SPEAKING_SETS,
+} from "@/lib/etsOfficialSpeaking";
+import {
+  getInterviewSessionForOfficialSet,
   type InterviewSession,
 } from "@/lib/interviewPrompts";
 import {
-  LISTEN_REPEAT_PROMPTS,
+  getPromptsBySetId,
   type ListenRepeatPrompt,
 } from "@/lib/prompts";
+import { getOfficialSetIdForTest } from "@/lib/testLibrary/mockTestSets";
 
-export const MOCK_EXAM_LISTEN_REPEAT_COUNT = 5;
+/** Full official Speaking section: 7 Listen & Repeat + 4 Interview. */
+export const MOCK_EXAM_LISTEN_REPEAT_COUNT = 7;
 export const MOCK_EXAM_RESPONSE_SECONDS = 45;
 export const MOCK_EXAM_PREP_SECONDS = 0;
 
 export interface MockExamPlan {
   listenRepeat: ListenRepeatPrompt[];
   interviewSession: InterviewSession;
+  officialSetId: string;
+  etsSource: string;
 }
 
-function shuffle<T>(items: T[]): T[] {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
-  }
-  return copy;
+function planFromOfficialSetId(setId: string): MockExamPlan {
+  const official = getOfficialSpeakingSetById(setId)!;
+  const listenRepeat = getPromptsBySetId(setId);
+  const interviewSession =
+    getInterviewSessionForOfficialSet(setId) ??
+    getInterviewSessionForOfficialSet(OFFICIAL_SPEAKING_SETS[0]!.id)!;
+
+  return {
+    listenRepeat,
+    interviewSession,
+    officialSetId: setId,
+    etsSource: official.etsSource,
+  };
+}
+
+export function buildDefaultMockExamPlan(): MockExamPlan {
+  return planFromOfficialSetId(OFFICIAL_SPEAKING_SETS[0]!.id);
 }
 
 export function buildMockExamPlan(): MockExamPlan {
-  const listenRepeat = shuffle(LISTEN_REPEAT_PROMPTS).slice(
-    0,
-    MOCK_EXAM_LISTEN_REPEAT_COUNT
-  );
-  return {
-    listenRepeat,
-    interviewSession: getRandomInterviewSession(),
-  };
+  const official = getRandomOfficialSpeakingSet();
+  return planFromOfficialSetId(official.id);
+}
+
+export type TestExamMode = "full" | "listen_repeat" | "interview";
+
+export function buildExamPlanForTest(testId: string): MockExamPlan {
+  const officialSetId =
+    getOfficialSetIdForTest(testId) ?? OFFICIAL_SPEAKING_SETS[0]!.id;
+  return planFromOfficialSetId(officialSetId);
 }
 
 export const MOCK_EXAM_OVERVIEW = {
@@ -41,5 +62,6 @@ export const MOCK_EXAM_OVERVIEW = {
   interviewCount: 4,
   prepSeconds: MOCK_EXAM_PREP_SECONDS,
   responseSeconds: MOCK_EXAM_RESPONSE_SECONDS,
-  estimatedMinutes: 14,
+  estimatedMinutes: 8,
+  officialSetCount: OFFICIAL_SPEAKING_SETS.length,
 };

@@ -33,6 +33,14 @@ const MIME_EXTENSION: Record<string, string> = {
   "audio/ogg;codecs=opus": "ogg",
 };
 
+/** Supabase bucket allowed_mime_types use base types without codec suffix. */
+function normalizeContentType(mimeType: string): string {
+  const base = mimeType.split(";")[0]?.trim().toLowerCase();
+  if (!base) return "audio/webm";
+  if (base.startsWith("audio/")) return base;
+  return "audio/webm";
+}
+
 function extensionFromMime(mimeType: string): string {
   return MIME_EXTENSION[mimeType] ?? "webm";
 }
@@ -103,27 +111,41 @@ export async function uploadAudioWithMeta(
   blob: Blob,
   options: UploadAudioOptions = {}
 ): Promise<UploadAudioResult> {
+  if (!blob.size) {
+    throw new Error(
+      "Recording is empty. Check your microphone and try again."
+    );
+  }
+
   const bucket = options.bucket ?? AUDIO_BUCKET;
   const useSignedUrl = options.signed ?? true;
+  const contentType = normalizeContentType(blob.type || "audio/webm");
   const userId = await resolveUserId(options.userId, options.allowAnonymous);
   const storagePath = buildStoragePath(
     userId,
     options.sessionId,
     options.fileName,
-    blob.type || "audio/webm"
+    contentType
   );
 
   const supabase = getSupabase();
   const { error: uploadError } = await supabase.storage
     .from(bucket)
     .upload(storagePath, blob, {
-      contentType: blob.type || "audio/webm",
+      contentType,
       upsert: false,
       cacheControl: "3600",
     });
 
   if (uploadError) {
-    throw new Error(`Upload failed: ${uploadError.message}`);
+    const hint =
+      uploadError.message.includes("400") ||
+      /mime|content.?type/i.test(uploadError.message)
+        ? " Check Supabase bucket allowed MIME types (run supabase/storage.sql)."
+        : /policy|row-level|permission|denied/i.test(uploadError.message)
+          ? " Check Storage RLS policies in supabase/storage.sql."
+          : "";
+    throw new Error(`Upload failed: ${uploadError.message}.${hint}`);
   }
 
   let audioUrl: string;
