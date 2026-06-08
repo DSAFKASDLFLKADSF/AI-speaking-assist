@@ -1,0 +1,27 @@
+# Baota: Website → your domain → Config file → paste and adjust
+# Replace YOUR_DOMAIN and certificate paths (Baota SSL can auto-fill).
+
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name YOUR_DOMAIN www.YOUR_DOMAIN;
+
+    # Baota Let's Encrypt — paths may differ; use panel SSL if unsure
+    # ssl_certificate    /www/server/panel/vhost/cert/YOUR_DOMAIN/fullchain.pem;
+    # ssl_certificate_key /www/server/panel/vhost/cert/YOUR_DOMAIN/privkey.pem;
+
+    client_max_body_size 32m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 60s;
+    }
+}
+
+# Python API (8000) is NOT exposed publicly — Next.js calls it on localhost only.
