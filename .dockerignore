@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env*.local
+python/.env
+python/__pycache__
+python/cache
+*.pyc
+.vscode
+.vercel
