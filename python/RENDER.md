@@ -1,6 +1,12 @@
 # Deploy FastAPI to Render
 
-## Manual setup (Render Dashboard)
+## Why Blueprint asked for a credit card
+
+The repo `render.yaml` must use **`plan: free`**. If it says `plan: starter`, Render treats it as a **paid** service (~$7/mo) and requires a payment method.
+
+Free web services do **not** require a card for most accounts. If Blueprint still asks for a card, skip Blueprint and use **Manual Web Service** below (Step-by-step in `deploy/RENDER-FREE.md`).
+
+## Manual setup (Render Dashboard) — recommended for free tier
 
 Create a **Web Service** with:
 
