@@ -1,5 +1,6 @@
 "use client";
 
+import { HistoryEntryDetail } from "@/components/dashboard/HistoryEntryDetail";
 import type { LocalHistoryEntry } from "@/lib/localHistory";
 import { getHistoryForTestSet } from "@/lib/localHistory";
 import { useEffect, useState } from "react";
@@ -42,17 +43,25 @@ export function TestSetHistory({ testSetId }: TestSetHistoryProps) {
     <ul className="divide-y divide-slate-100">
       {entries.map((entry) => (
         <li key={entry.id} className="py-3 first:pt-0">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-slate-900">
-                {modeLabel(entry)}
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">{entry.summary}</p>
-            </div>
-            <time className="shrink-0 text-xs text-slate-400">
-              {formatDate(entry.createdAt)}
-            </time>
-          </div>
+          <details className="group">
+            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-900">
+                    {modeLabel(entry)}
+                    <span className="ml-2 text-xs font-normal text-slate-400">
+                      Tap to view details
+                    </span>
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">{entry.summary}</p>
+                </div>
+                <time className="shrink-0 text-xs text-slate-400">
+                  {formatDate(entry.createdAt)}
+                </time>
+              </div>
+            </summary>
+            <HistoryEntryDetail entry={entry} />
+          </details>
         </li>
       ))}
     </ul>

@@ -9,6 +9,7 @@ import {
   OFFICIAL_SPEAKING_SETS,
   type OfficialInterviewQuestionType,
 } from "@/lib/etsOfficialSpeaking";
+import type { InterviewHintBullet } from "@/lib/interviewHintContent";
 
 export type InterviewQuestionType = OfficialInterviewQuestionType;
 
@@ -34,7 +35,7 @@ export interface InterviewPrompt {
   prompt: string;
   prepSeconds: 0;
   responseSeconds: 45;
-  hints: string[];
+  hints: InterviewHintBullet[];
   etsSource: string;
 }
 

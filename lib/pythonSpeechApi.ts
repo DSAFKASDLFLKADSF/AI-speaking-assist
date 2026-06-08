@@ -131,6 +131,7 @@ async function callPythonApi<T>(
       headers,
       body: method === "GET" ? undefined : JSON.stringify(payload),
       signal: controller.signal,
+      cache: "no-store",
     });
 
     if (response.status === 204) {

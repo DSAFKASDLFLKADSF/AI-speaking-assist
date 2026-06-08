@@ -1,4 +1,6 @@
 import type { InterviewScores } from "@/components/InterviewScoreCard";
+import type { AnalyzeInterviewResponse } from "@/lib/analyze-interview-types";
+import type { AnalyzeSpeechResponse } from "@/lib/analyze-speech-types";
 
 const STORAGE_KEY = "toefl-speaking-local-history";
 const MAX_ENTRIES = 100;
@@ -11,15 +13,24 @@ export interface LocalListenRepeatDetail {
   score: number;
   scoreSummary: string;
   feedbackSummary: string;
+  /** Full prompt text for history detail view */
+  original?: string;
+  /** Full scoring payload when saved after a completed exam */
+  analysis?: AnalyzeSpeechResponse;
 }
 
 export interface LocalInterviewDetail {
   questionId: string;
+  title?: string;
   sessionTheme: string;
   promptPreview: string;
   scores: InterviewScores;
   scoreSummary: string;
   feedbackSummary: string;
+  /** Full question text for history detail view */
+  promptText?: string;
+  /** Full scoring payload when saved after a completed exam */
+  analysis?: AnalyzeInterviewResponse;
 }
 
 export interface LocalMockExamDetail {

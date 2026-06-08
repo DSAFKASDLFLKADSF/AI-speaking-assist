@@ -7,6 +7,8 @@
  * - toefl-ibt-full-length-practice-test-2.pdf
  */
 
+import type { InterviewHintBullet } from "@/lib/interviewHintContent";
+
 /** Official per-item response windows for Listen & Repeat (items 1–7). */
 export const OFFICIAL_LR_RESPONSE_SECONDS = [8, 8, 10, 10, 10, 12, 12] as const;
 
@@ -30,7 +32,8 @@ export interface OfficialListenRepeatBlock {
 export interface OfficialInterviewQuestion {
   questionType: OfficialInterviewQuestionType;
   prompt: string;
-  hints: string[];
+  /** Claim + example phrases for each answer angle. */
+  hints: InterviewHintBullet[];
 }
 
 export interface OfficialInterviewBlock {
@@ -89,8 +92,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "First, can you share one or two strategies that you use that you think are effective in managing your work-life balance?",
           hints: [
-            "Name one or two concrete strategies.",
-            "Explain briefly why each one works for you.",
+            {
+              claim: "Set clear boundaries after work",
+              examples: [
+                "stop checking email",
+                "turn off notifications",
+                "keep weekends free",
+              ],
+            },
+            {
+              claim: "Protect personal time with scheduling",
+              examples: [
+                "time blocking",
+                "family dinners",
+                "short daily walks",
+              ],
+            },
+            {
+              claim: "Share workload when possible",
+              examples: ["delegate tasks", "ask for help", "say no to extras"],
+            },
           ],
         },
         {
@@ -98,8 +119,30 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Many companies are now developing programs to help employees manage work-life balance. Would programs like this affect your interest in working for a particular company? Why or why not?",
           hints: [
-            "Give a clear yes/no or degree of influence.",
-            "Support with one practical reason.",
+            {
+              claim: "Strong benefits would attract me",
+              examples: [
+                "paid leave",
+                "childcare support",
+                "mental health days",
+              ],
+            },
+            {
+              claim: "Flexibility matters as much as perks",
+              examples: [
+                "remote days",
+                "flexible hours",
+                "compressed workweek",
+              ],
+            },
+            {
+              claim: "Culture still decides the job",
+              examples: [
+                "respectful managers",
+                "realistic deadlines",
+                "no guilt for logging off",
+              ],
+            },
           ],
         },
         {
@@ -107,8 +150,22 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Some companies also offer flexible working hours or remote work options to help employees achieve a better work-life balance, but they are concerned that these options would reduce employee attention to tasks or engagement in the workplace. Do you think such programs are a good strategy for companies? Why or why not?",
           hints: [
-            "Take a clear position.",
-            "Address both company and employee perspectives briefly.",
+            {
+              claim: "Flexibility can boost productivity",
+              examples: ["less commute", "fewer distractions", "focused deep work"],
+            },
+            {
+              claim: "Remote work can weaken connection",
+              examples: ["isolation", "slower teamwork", "missed hallway chats"],
+            },
+            {
+              claim: "Trust-based policies need clear goals",
+              examples: [
+                "output metrics",
+                "regular check-ins",
+                "hybrid office days",
+              ],
+            },
           ],
         },
         {
@@ -116,8 +173,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Lastly, looking to the future, do you think people's attitudes towards work-life balance will change? For example, do you think people will prioritize personal life over work, or work over personal life? Explain your thoughts.",
           hints: [
-            "State your prediction clearly.",
-            "Give one reason people might shift priorities.",
+            {
+              claim: "Personal life may gain priority",
+              examples: [
+                "burnout awareness",
+                "family time",
+                "remote work normalization",
+              ],
+            },
+            {
+              claim: "Work may still dominate for many",
+              examples: [
+                "career ambition",
+                "rising living costs",
+                "side hustles",
+              ],
+            },
+            {
+              claim: "Technology will reshape expectations",
+              examples: ["automation", "gig jobs", "always-on culture"],
+            },
           ],
         },
       ],
@@ -168,8 +243,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Do you currently live in a big city, a small town, or a village?",
           hints: [
-            "Answer directly in the first sentence.",
-            "Add one detail about your living situation.",
+            {
+              claim: "I live in a big city",
+              examples: [
+                "downtown apartment",
+                "subway nearby",
+                "busy streets",
+              ],
+            },
+            {
+              claim: "I prefer a quieter small town",
+              examples: ["fewer crowds", "lower cost", "shorter errands"],
+            },
+            {
+              claim: "Suburbs can be a middle ground",
+              examples: [
+                "more space",
+                "train commute",
+                "family-friendly streets",
+              ],
+            },
           ],
         },
         {
@@ -177,8 +270,22 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Cities affect people in different ways. Some people find cities dynamic and exciting. Others find that cities are overwhelming and drain them of energy. What kind of reaction do you have to cities? Why do you think you react in this way?",
           hints: [
-            "Describe your personal reaction clearly.",
-            "Give one reason rooted in experience.",
+            {
+              claim: "Cities feel exciting and energizing",
+              examples: ["nightlife", "diverse food", "constant activity"],
+            },
+            {
+              claim: "Cities can feel overwhelming",
+              examples: ["noise", "crowds", "fast pace", "sensory overload"],
+            },
+            {
+              claim: "Personality shapes the reaction",
+              examples: [
+                "introvert vs extrovert",
+                "childhood hometown",
+                "current stress level",
+              ],
+            },
           ],
         },
         {
@@ -186,8 +293,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Some people believe that those who live in cities lead more interesting lives. They would argue, for example, that people who live in cities have more access to professional opportunities and interesting leisure activities. Do you agree that people who live in cities lead more interesting lives? Why or why not?",
           hints: [
-            "State agree/disagree early.",
-            "Use one opportunity and one counterpoint if needed.",
+            {
+              claim: "City life offers everyday convenience",
+              examples: [
+                "supermarkets nearby",
+                "24-hour shops",
+                "fast delivery",
+              ],
+            },
+            {
+              claim: "Transportation makes city life easier",
+              examples: ["subway", "bus routes", "short taxi rides"],
+            },
+            {
+              claim: "City life can also feel harsh",
+              examples: ["loud streets", "fast pace", "high rent"],
+            },
+            {
+              claim: "Leisure options are richer in cities",
+              examples: ["museums", "concerts", "new restaurants"],
+            },
           ],
         },
         {
@@ -195,8 +320,31 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "For some time now, researchers have been interested in whether green spaces, such as parks, make people who live in cities happier. Do you think that city governments should create more parks in urban areas to promote a general sense of happiness and life satisfaction? Why or why not?",
           hints: [
-            "Take a clear stance on more parks.",
-            "Link parks to happiness or wellbeing with an example.",
+            {
+              claim: "Parks improve daily wellbeing",
+              examples: [
+                "fresh air",
+                "walking paths",
+                "stress relief",
+                "picnic spots",
+              ],
+            },
+            {
+              claim: "Green space builds community",
+              examples: [
+                "playgrounds",
+                "group exercise",
+                "weekend markets",
+              ],
+            },
+            {
+              claim: "Every city faces space and cost limits",
+              examples: [
+                "maintenance budgets",
+                "crowded neighborhoods",
+                "competing land use",
+              ],
+            },
           ],
         },
       ],
@@ -244,8 +392,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "First, is it important to live close to your school or work? Why?",
           hints: [
-            "Answer yes/no or how important, then why.",
-            "Mention time, cost, or convenience.",
+            {
+              claim: "Living nearby saves time every day",
+              examples: [
+                "shorter commute",
+                "more sleep",
+                "less rush-hour stress",
+              ],
+            },
+            {
+              claim: "Distance raises daily costs",
+              examples: ["gas money", "transit fares", "parking fees"],
+            },
+            {
+              claim: "Proximity makes life more flexible",
+              examples: [
+                "lunch at home",
+                "gym after work",
+                "pick up kids quickly",
+              ],
+            },
           ],
         },
         {
@@ -253,8 +419,22 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Imagine that you could choose to commute by car, which is faster but more expensive, or by public transportation, which is slower but less expensive. Which would you choose, and why?",
           hints: [
-            "Pick one mode and commit to it.",
-            "Compare speed vs cost in one example.",
+            {
+              claim: "A car is faster but costly",
+              examples: [
+                "traffic jams",
+                "parking fees",
+                "fuel and insurance",
+              ],
+            },
+            {
+              claim: "Public transit is cheaper but slower",
+              examples: ["subway", "bus schedule", "walk to the stop"],
+            },
+            {
+              claim: "The best choice depends on lifestyle",
+              examples: ["reliability", "comfort", "budget", "city layout"],
+            },
           ],
         },
         {
@@ -262,8 +442,22 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Some people believe that commuting can be stressful and tiring. What do you think are one or two different ways to make commuting more enjoyable? Give reasons for your answer.",
           hints: [
-            "Offer one or two practical ideas.",
-            "Explain why each idea helps.",
+            {
+              claim: "Use travel time productively",
+              examples: ["podcasts", "audiobooks", "language apps"],
+            },
+            {
+              claim: "Make the trip itself more pleasant",
+              examples: ["music playlists", "scenic route", "cycling"],
+            },
+            {
+              claim: "Share the ride when possible",
+              examples: [
+                "carpool with coworkers",
+                "chat with a friend",
+                "less boredom",
+              ],
+            },
           ],
         },
         {
@@ -271,8 +465,34 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Lastly, considering advances in technology, some people believe that commuting might disappear entirely. How do you think a severe decline in commuting might affect businesses in positive ways and negative ways? Please give one example of each.",
           hints: [
-            "One positive effect on businesses.",
-            "One negative effect on businesses.",
+            {
+              claim: "Businesses could cut office costs",
+              examples: [
+                "lower rent",
+                "smaller headquarters",
+                "less parking",
+              ],
+            },
+            {
+              claim: "Hiring could become more flexible",
+              examples: [
+                "nationwide recruiting",
+                "async schedules",
+                "remote tools",
+              ],
+            },
+            {
+              claim: "Local businesses may lose customers",
+              examples: ["empty cafes", "less foot traffic", "quiet districts"],
+            },
+            {
+              claim: "Team culture may weaken",
+              examples: [
+                "fewer face-to-face meetings",
+                "less bonding",
+                "harder onboarding",
+              ],
+            },
           ],
         },
       ],
@@ -320,8 +540,22 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "First, can you describe the type of exercise you or someone you know typically does regularly, such as running, yoga, or weightlifting? Why?",
           hints: [
-            "Name a specific activity.",
-            "Explain why you or they do it.",
+            {
+              claim: "Cardio builds stamina over time",
+              examples: ["running", "cycling", "swimming laps", "jump rope"],
+            },
+            {
+              claim: "Strength training builds muscle",
+              examples: [
+                "weightlifting",
+                "resistance bands",
+                "bodyweight squats",
+              ],
+            },
+            {
+              claim: "Mind-body exercise reduces stress",
+              examples: ["yoga", "Pilates", "stretching routines"],
+            },
           ],
         },
         {
@@ -329,8 +563,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Some exercise programs are done alone, and some are designed to be done with others. Would you prefer to exercise alone, or would you prefer to exercise with others? Why?",
           hints: [
-            "State alone vs with others clearly.",
-            "Give one personal reason.",
+            {
+              claim: "Exercising alone offers focus",
+              examples: [
+                "flexible schedule",
+                "no waiting for others",
+                "personal pace",
+              ],
+            },
+            {
+              claim: "Group exercise adds motivation",
+              examples: ["gym class", "running club", "friendly competition"],
+            },
+            {
+              claim: "Social pressure can help or hurt",
+              examples: [
+                "accountability partner",
+                "gym intimidation",
+                "comparing progress",
+              ],
+            },
           ],
         },
         {
@@ -338,8 +590,26 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Some people believe that exercising outdoors is both more beneficial and more enjoyable than exercising indoors. Do you agree or disagree and why?",
           hints: [
-            "Agree or disagree in sentence one.",
-            "Compare outdoor vs indoor with one example.",
+            {
+              claim: "Outdoors feels refreshing",
+              examples: ["sunshine", "fresh air", "parks", "scenic trails"],
+            },
+            {
+              claim: "Indoors is more controlled",
+              examples: [
+                "gym equipment",
+                "air conditioning",
+                "weather-proof routine",
+              ],
+            },
+            {
+              claim: "Safety and access vary",
+              examples: [
+                "traffic for runners",
+                "gym membership cost",
+                "seasonal weather",
+              ],
+            },
           ],
         },
         {
@@ -347,8 +617,30 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
           prompt:
             "Lastly, I would like to ask about using fitness apps. Some people like to use fitness apps on smart phones to organize their fitness schedules. Do you agree this is a good way to keep track of your exercising goals? Why or why not?",
           hints: [
-            "Clear yes/no on fitness apps.",
-            "Mention organization, motivation, or accuracy.",
+            {
+              claim: "Apps help track progress",
+              examples: [
+                "step counter",
+                "workout log",
+                "progress charts",
+              ],
+            },
+            {
+              claim: "Reminders keep habits consistent",
+              examples: [
+                "daily alerts",
+                "streak goals",
+                "scheduled rest days",
+              ],
+            },
+            {
+              claim: "Apps are not always reliable",
+              examples: [
+                "GPS errors",
+                "battery drain",
+                "easy to ignore notifications",
+              ],
+            },
           ],
         },
       ],

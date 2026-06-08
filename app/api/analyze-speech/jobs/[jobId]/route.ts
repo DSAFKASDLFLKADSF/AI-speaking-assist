@@ -8,9 +8,10 @@ import {
   setPythonJobClientResult,
   type PythonAnalyzeSpeechResponse,
 } from "@/lib/pythonSpeechApi";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { createSupabaseServerClientSafe } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(
   _request: Request,
@@ -48,7 +49,7 @@ export async function GET(
       } satisfies AnalysisJobPollResponse);
     }
 
-    const supabase = await createSupabaseServerClient();
+    const supabase = await createSupabaseServerClientSafe();
     const requestBody = mapPythonListenRepeatRequest(job.request ?? undefined);
 
     const finalized = await finalizeListenRepeatAnalysis(

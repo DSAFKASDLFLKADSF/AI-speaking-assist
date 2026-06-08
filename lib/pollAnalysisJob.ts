@@ -3,6 +3,10 @@ import type { AnalysisJobPollResponse } from "@/lib/analysisJobTypes";
 export interface PollAnalysisJobOptions {
   intervalMs?: number;
   maxWaitMs?: number;
+  /** Per-request timeout so a stuck server cannot hang the UI forever. */
+  requestTimeoutMs?: number;
+  /** Called on each poll tick with the latest job status. */
+  onStatus?: (status: string) => void;
 }
 
 export class PollAnalysisJobError extends Error {
@@ -22,6 +26,31 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new PollAnalysisJobError(
+        "Analysis status check timed out. The server may be busy — try Retry scoring.",
+        504
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /** Poll a Next.js analysis job until done or failed. */
 export async function pollAnalysisJob<T>(
   pollUrl: string,
@@ -29,10 +58,11 @@ export async function pollAnalysisJob<T>(
 ): Promise<T> {
   const intervalMs = options.intervalMs ?? 2500;
   const maxWaitMs = options.maxWaitMs ?? 300_000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 45_000;
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < maxWaitMs) {
-    const res = await fetch(pollUrl, { credentials: "same-origin" });
+    const res = await fetchWithTimeout(pollUrl, requestTimeoutMs);
     const data: unknown = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -44,6 +74,10 @@ export async function pollAnalysisJob<T>(
     }
 
     const poll = data as AnalysisJobPollResponse<T>;
+
+    if (poll.status) {
+      options.onStatus?.(poll.status);
+    }
 
     if (poll.status === "failed") {
       throw new PollAnalysisJobError(poll.error ?? "Analysis failed.", 502, poll);

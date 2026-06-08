@@ -169,3 +169,22 @@ export async function uploadAudioWithMeta(
 
   return { audioUrl, storagePath, bucket };
 }
+
+/** Refresh a signed playback URL before sending audio to the Python API. */
+export async function refreshSignedAudioUrl(
+  storagePath: string,
+  bucket: string = AUDIO_BUCKET
+): Promise<string> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+
+  if (error || !data?.signedUrl) {
+    throw new Error(
+      `Failed to refresh audio URL: ${error?.message ?? "Unknown error"}`
+    );
+  }
+
+  return data.signedUrl;
+}

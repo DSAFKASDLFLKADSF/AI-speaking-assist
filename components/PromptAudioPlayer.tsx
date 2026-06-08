@@ -134,20 +134,43 @@ export function PromptAudioPlayer({
 
   useEffect(() => {
     if (!autoPlay || disabled || autoPlayedRef.current) return;
-    autoPlayedRef.current = true;
-    const t = window.setTimeout(() => void play(), 400);
-    return () => window.clearTimeout(t);
-  }, [autoPlay, disabled, play]);
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (audioSrc) {
+        staticOkRef.current = await probeAudioUrl(audioSrc);
+      }
+      if (cancelled || autoPlayedRef.current) return;
+      autoPlayedRef.current = true;
+      await play();
+    };
+
+    const t = window.setTimeout(() => void run(), examMode ? 300 : 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [autoPlay, disabled, play, audioSrc, examMode]);
 
   useEffect(() => {
     autoPlayedRef.current = false;
     endedRef.current = false;
   }, [text, speechId, audioSrc, neuralUrl]);
 
-  useEffect(() => () => {
-    if (!examMode) stop();
-    else cancelSpeech();
-  }, [examMode, stop]);
+  useEffect(
+    () => () => {
+      cancelSpeech();
+      const audio = audioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        audioRef.current = null;
+      }
+    },
+    [text, speechId, audioSrc]
+  );
 
   if (examMode) {
     return (

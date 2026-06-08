@@ -34,6 +34,15 @@ export async function createSupabaseServerClient(): Promise<TypedSupabaseClient>
   }) as TypedSupabaseClient;
 }
 
+/** Returns null when Supabase env is missing — analysis can still complete. */
+export async function createSupabaseServerClientSafe(): Promise<TypedSupabaseClient | null> {
+  try {
+    return await createSupabaseServerClient();
+  } catch {
+    return null;
+  }
+}
+
 /** Service-role client for trusted server writes (optional). */
 export function createSupabaseServiceClient(): TypedSupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

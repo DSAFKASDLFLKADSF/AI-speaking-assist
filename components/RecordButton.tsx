@@ -49,6 +49,18 @@ function getSupportedMimeType(): string {
   return "";
 }
 
+const MIN_RECORDING_MS = 400;
+
+function flushRecorderData(recorder: MediaRecorder): void {
+  if (recorder.state === "recording" && typeof recorder.requestData === "function") {
+    try {
+      recorder.requestData();
+    } catch {
+      // ignore — some browsers throw if no data yet
+    }
+  }
+}
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -86,6 +98,8 @@ export function RecordButton({
   const chunksRef = useRef<Blob[]>([]);
   const recordingStartRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingStopRef = useRef(false);
+  const stopRecordingRef = useRef<() => void>(() => undefined);
 
   const updateStatus = useCallback(
     (next: RecordingStatus) => {
@@ -122,7 +136,13 @@ export function RecordButton({
   );
 
   const startRecording = useCallback(async () => {
-    if (disabled || status === "recording" || status === "requesting") return;
+    if (
+      disabled ||
+      status === "recording" ||
+      status === "requesting"
+    ) {
+      return;
+    }
 
     setErrorMessage(null);
     updateStatus("requesting");
@@ -137,7 +157,13 @@ export function RecordButton({
         throw new Error("No supported audio recording format found.");
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
       onStreamReady?.(stream);
       chunksRef.current = [];
@@ -165,14 +191,25 @@ export function RecordButton({
 
         chunksRef.current = [];
         mediaRecorderRef.current = null;
+        pendingStopRef.current = false;
 
         setElapsedMs(0);
         onRecordingStop?.();
+
+        if (blob.size === 0) {
+          handleError(
+            new Error(
+              "Recording is empty. Check your microphone and try again."
+            )
+          );
+          return;
+        }
+
         onRecordingComplete?.({ blob, url, mimeType, durationMs });
         updateStatus("idle");
       };
 
-      mediaRecorder.start(250);
+      mediaRecorder.start();
       recordingStartRef.current = Date.now();
       setElapsedMs(0);
 
@@ -182,6 +219,10 @@ export function RecordButton({
 
       updateStatus("recording");
       onRecordingStart?.();
+
+      if (pendingStopRef.current) {
+        window.setTimeout(() => stopRecordingRef.current(), MIN_RECORDING_MS);
+      }
     } catch (err) {
       handleError(
         err instanceof Error ? err : new Error("Failed to start recording.")
@@ -202,12 +243,35 @@ export function RecordButton({
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state !== "recording") return;
+    if (!recorder) {
+      pendingStopRef.current = false;
+      return;
+    }
 
+    if (recorder.state === "inactive") {
+      pendingStopRef.current = false;
+      return;
+    }
+
+    if (recorder.state !== "recording") {
+      pendingStopRef.current = true;
+      return;
+    }
+
+    const elapsed = Date.now() - recordingStartRef.current;
+    if (elapsed < MIN_RECORDING_MS) {
+      window.setTimeout(() => stopRecordingRef.current(), MIN_RECORDING_MS - elapsed);
+      return;
+    }
+
+    pendingStopRef.current = false;
     updateStatus("processing");
     clearTimer();
+    flushRecorderData(recorder);
     recorder.stop();
   }, [updateStatus, clearTimer]);
+
+  stopRecordingRef.current = stopRecording;
 
   const handleToggle = () => {
     if (status === "recording") {
@@ -224,17 +288,24 @@ export function RecordButton({
     if (
       startSignal > lastStartSignal.current &&
       !disabled &&
-      (status === "idle" || status === "error")
+      (status === "idle" || status === "error" || status === "processing")
     ) {
       lastStartSignal.current = startSignal;
+      if (status === "processing") {
+        clearTimer();
+        stopStream();
+        mediaRecorderRef.current = null;
+        chunksRef.current = [];
+        setErrorMessage(null);
+      }
       void startRecording();
     }
-  }, [startSignal, disabled, status, startRecording]);
+  }, [startSignal, disabled, status, startRecording, clearTimer, stopStream]);
 
   useEffect(() => {
     if (
       stopSignal > lastStopSignal.current &&
-      status === "recording"
+      (status === "recording" || status === "requesting")
     ) {
       lastStopSignal.current = stopSignal;
       stopRecording();

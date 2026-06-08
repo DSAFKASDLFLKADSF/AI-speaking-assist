@@ -11,7 +11,11 @@ import type {
   PracticeHistoryQuery,
   PracticeHistoryResponse,
 } from "@/lib/history-types";
-import { pollAnalysisJob, PollAnalysisJobError } from "@/lib/pollAnalysisJob";
+import {
+  pollAnalysisJob,
+  PollAnalysisJobError,
+  type PollAnalysisJobOptions,
+} from "@/lib/pollAnalysisJob";
 import type {
   CreatePracticeSessionRequest,
   CreatePracticeSessionResponse,
@@ -54,13 +58,15 @@ interface ApiRequestOptions {
   body?: unknown;
   searchParams?: Record<string, string | number | undefined | null>;
   fallbackError?: string;
+  timeoutMs?: number;
 }
 
 async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {}
 ): Promise<T> {
-  const { method = "GET", body, searchParams, fallbackError } = options;
+  const { method = "GET", body, searchParams, fallbackError, timeoutMs } =
+    options;
 
   let url = path;
   if (searchParams) {
@@ -81,23 +87,46 @@ async function apiRequest<T>(
     init.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, init);
-  const data: unknown = await res.json().catch(() => ({}));
+  const controller = new AbortController();
+  const timeout =
+    timeoutMs !== undefined
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+  init.signal = controller.signal;
 
-  if (!res.ok) {
-    const message =
-      (data as { error?: string }).error ??
-      fallbackError ??
-      `Request failed (${res.status})`;
-    throw new ApiError(message, res.status, data);
+  try {
+    const res = await fetch(url, init);
+    const data: unknown = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const message =
+        (data as { error?: string }).error ??
+        fallbackError ??
+        `Request failed (${res.status})`;
+      throw new ApiError(message, res.status, data);
+    }
+
+    return data as T;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError(
+        fallbackError ?? "Request timed out. Check that the Python API is running.",
+        504
+      );
+    }
+    throw err;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
-
-  return data as T;
 }
+
+type AnalyzeOptions = Pick<PollAnalysisJobOptions, "onStatus">;
 
 /** POST /api/analyze-speech — submit job, poll until Listen & Repeat analysis completes */
 export async function analyzeSpeech(
-  payload: AnalyzeSpeechRequest
+  payload: AnalyzeSpeechRequest,
+  options: AnalyzeOptions = {}
 ): Promise<AnalyzeSpeechResponse> {
   try {
     const created = await apiRequest<AnalysisJobCreatedResponse>(
@@ -106,11 +135,13 @@ export async function analyzeSpeech(
         method: "POST",
         body: payload,
         fallbackError: "Speech analysis failed.",
+        timeoutMs: 60_000,
       }
     );
 
     return await pollAnalysisJob<AnalyzeSpeechResponse>(
-      `/api/analyze-speech/jobs/${encodeURIComponent(created.jobId)}`
+      `/api/analyze-speech/jobs/${encodeURIComponent(created.jobId)}`,
+      { onStatus: options.onStatus }
     );
   } catch (err) {
     if (err instanceof PollAnalysisJobError) {
@@ -122,7 +153,8 @@ export async function analyzeSpeech(
 
 /** POST /api/analyze-interview — submit job, poll until Virtual Interview analysis completes */
 export async function analyzeInterview(
-  payload: AnalyzeInterviewRequest
+  payload: AnalyzeInterviewRequest,
+  options: AnalyzeOptions = {}
 ): Promise<AnalyzeInterviewResponse> {
   try {
     const created = await apiRequest<AnalysisJobCreatedResponse>(
@@ -131,11 +163,13 @@ export async function analyzeInterview(
         method: "POST",
         body: payload,
         fallbackError: "Interview analysis failed.",
+        timeoutMs: 60_000,
       }
     );
 
     return await pollAnalysisJob<AnalyzeInterviewResponse>(
-      `/api/analyze-interview/jobs/${encodeURIComponent(created.jobId)}`
+      `/api/analyze-interview/jobs/${encodeURIComponent(created.jobId)}`,
+      { onStatus: options.onStatus }
     );
   } catch (err) {
     if (err instanceof PollAnalysisJobError) {
