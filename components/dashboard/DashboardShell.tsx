@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { HeaderActions } from "@/components/dashboard/HeaderActions";
 
 const SIDEBAR_ITEMS = [
   {
@@ -25,16 +26,24 @@ const SIDEBAR_ITEMS = [
   },
 ] as const;
 
-export interface DashboardShellProps {
-  children: ReactNode;
-  title?: string;
+function pageTitleForPath(pathname: string): string {
+  if (pathname.startsWith("/growth")) return "Growth";
+  if (pathname.startsWith("/test/")) return "Practice Test";
+  return "Test Library";
 }
 
-export function DashboardShell({ children, title = "Test Library" }: DashboardShellProps) {
+export interface DashboardShellProps {
+  children: ReactNode;
+}
+
+export function DashboardShell({ children }: DashboardShellProps) {
   const pathname = usePathname();
+  const pageTitle = pageTitleForPath(pathname);
 
   const isActive = (href: string) => {
-    if (href === "/dashboard") return pathname === "/dashboard" || pathname.startsWith("/test/");
+    if (href === "/dashboard") {
+      return pathname === "/dashboard" || pathname.startsWith("/test/");
+    }
     return pathname.startsWith(href);
   };
 
@@ -42,13 +51,14 @@ export function DashboardShell({ children, title = "Test Library" }: DashboardSh
     <div className="flex min-h-screen bg-slate-100">
       <aside className="fixed inset-y-0 left-0 z-40 flex w-14 flex-col items-center border-r border-slate-200 bg-white py-4 md:w-16">
         <Link
-          href="/dashboard"
-          className="mb-6 flex h-9 w-9 items-center justify-center rounded-lg bg-[#1e3a5f] text-xs font-bold text-white"
-          title="TOEFL Speaking AI"
+          href="/"
+          className="mb-6 flex h-9 w-9 items-center justify-center rounded-lg bg-[#1e3a5f] text-xs font-bold text-white transition-opacity hover:opacity-90"
+          title="TOEFL Speaking AI — Home"
+          aria-label="TOEFL Speaking AI — Home"
         >
           T
         </Link>
-        <nav className="flex flex-1 flex-col gap-2" aria-label="Dashboard">
+        <nav className="flex flex-1 flex-col gap-2" aria-label="App sections">
           {SIDEBAR_ITEMS.map((item) => {
             const active = isActive(item.href);
             return (
@@ -56,6 +66,8 @@ export function DashboardShell({ children, title = "Test Library" }: DashboardSh
                 key={item.href}
                 href={item.href}
                 title={item.label}
+                aria-label={item.label}
+                aria-current={active ? "page" : undefined}
                 className={`flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
                   active
                     ? "bg-blue-50 text-blue-600"
@@ -71,36 +83,19 @@ export function DashboardShell({ children, title = "Test Library" }: DashboardSh
 
       <div className="flex min-w-0 flex-1 flex-col pl-14 md:pl-16">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6">
-          <h1 className="text-sm font-semibold text-slate-900 sm:text-base">{title}</h1>
-          <div className="flex items-center gap-2 text-slate-500">
-            <button
-              type="button"
-              className="rounded-lg p-2 hover:bg-slate-100"
-              aria-label="Search"
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              href="/"
+              className="shrink-0 text-sm font-semibold tracking-tight text-slate-900 transition-colors hover:text-blue-700 sm:text-base"
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="rounded-lg p-2 hover:bg-slate-100"
-              aria-label="Notifications"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="rounded-lg p-2 hover:bg-slate-100"
-              aria-label="Account"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-              </svg>
-            </button>
+              TOEFL Speaking AI
+            </Link>
+            <span className="text-slate-300" aria-hidden="true">
+              /
+            </span>
+            <span className="truncate text-sm text-slate-600">{pageTitle}</span>
           </div>
+          <HeaderActions />
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>

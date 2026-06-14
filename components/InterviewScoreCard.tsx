@@ -1,3 +1,9 @@
+import {
+  formatSpeakingBand,
+  rawScoreToSpeakingBand,
+  SPEAKING_BAND_MAX,
+} from "@/lib/toeflSpeakingBand";
+
 export type InterviewDimensionScore = 1 | 2 | 3 | 4 | 5;
 
 export interface InterviewScores {
@@ -31,24 +37,25 @@ function clampScore(score: number): InterviewDimensionScore {
   return rounded as InterviewDimensionScore;
 }
 
-function averageScore(scores: InterviewScores): InterviewDimensionScore {
+function averageScore(scores: InterviewScores): number {
   const total =
     scores.topic + scores.pace + scores.pronunciation + scores.grammar;
-  return clampScore(total / 4);
+  return total / 4;
 }
 
-function ScoreBar({ value }: { value: InterviewDimensionScore }) {
+function ScoreBar({ band }: { band: number }) {
+  const filled = Math.round(band);
   return (
     <div
       className="flex gap-1"
       role="img"
-      aria-label={`Score ${value} out of 5`}
+      aria-label={`Score ${formatSpeakingBand(band)} out of ${SPEAKING_BAND_MAX}`}
     >
-      {([1, 2, 3, 4, 5] as InterviewDimensionScore[]).map((step) => (
+      {Array.from({ length: SPEAKING_BAND_MAX }, (_, i) => i + 1).map((step) => (
         <span
           key={step}
           className={`h-1.5 w-full max-w-8 rounded-full ${
-            step <= value ? "bg-slate-900" : "bg-slate-200"
+            step <= filled ? "bg-slate-900" : "bg-slate-200"
           }`}
         />
       ))}
@@ -68,7 +75,7 @@ export function InterviewScoreCard({
     grammar: clampScore(scores.grammar),
   };
 
-  const overall = averageScore(normalized);
+  const overallBand = rawScoreToSpeakingBand(averageScore(normalized));
 
   return (
     <div
@@ -81,27 +88,28 @@ export function InterviewScoreCard({
           </p>
           <div className="mt-3 flex items-end gap-2">
             <p className="text-4xl font-semibold tabular-nums text-slate-900">
-              {overall}
+              {formatSpeakingBand(overallBand)}
             </p>
-            <p className="mb-1.5 text-sm text-slate-400">/ 5 avg</p>
+            <p className="mb-1.5 text-sm text-slate-400">/ {SPEAKING_BAND_MAX}</p>
           </div>
         </div>
       </div>
 
       <ul className="mt-6 space-y-4">
         {DIMENSIONS.map(({ key, label }) => {
-          const value = normalized[key];
+          const raw = normalized[key];
+          const band = rawScoreToSpeakingBand(raw);
           return (
             <li key={key}>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-slate-700">{label}</span>
                 <span className="font-mono text-sm tabular-nums text-slate-900">
-                  {value}
-                  <span className="text-slate-400">/5</span>
+                  {formatSpeakingBand(band)}
+                  <span className="text-slate-400">/{SPEAKING_BAND_MAX}</span>
                 </span>
               </div>
               <div className="mt-2">
-                <ScoreBar value={value} />
+                <ScoreBar band={band} />
               </div>
             </li>
           );
@@ -115,4 +123,8 @@ export function InterviewScoreCard({
       )}
     </div>
   );
+}
+
+export function interviewScoresToBand(scores: InterviewScores): number {
+  return rawScoreToSpeakingBand(averageScore(scores));
 }

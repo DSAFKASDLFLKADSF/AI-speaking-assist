@@ -1,6 +1,10 @@
 import type { InterviewScores } from "@/components/InterviewScoreCard";
 import type { AnalyzeInterviewResponse } from "@/lib/analyze-interview-types";
 import type { AnalyzeSpeechResponse } from "@/lib/analyze-speech-types";
+import {
+  formatSpeakingBand,
+  SPEAKING_BAND_MAX,
+} from "@/lib/toeflSpeakingBand";
 
 const STORAGE_KEY = "toefl-speaking-local-history";
 const MAX_ENTRIES = 100;
@@ -38,8 +42,11 @@ export interface LocalMockExamDetail {
   sessionTheme: string;
   listenRepeat: LocalListenRepeatDetail[];
   interview: LocalInterviewDetail[];
+  /** Section band 1–6 (0.5 steps), from summed item scores. */
   listenRepeatAvg: number;
+  /** Section band 1–6 (0.5 steps), from summed item scores. */
   interviewAvg: number;
+  /** Overall Speaking band 1–6 (0.5 steps), from all item scores. */
   overallScore: number;
 }
 
@@ -179,7 +186,7 @@ export function saveMockExamLocalHistory(
     testSetId: meta?.testSetId,
     examMode: meta?.examMode ?? "full",
     title: meta?.title ?? `Full Mock · ${detail.sessionTheme}`,
-    summary: `Listen & Repeat ${detail.listenRepeatAvg.toFixed(1)}/5 · Interview ${detail.interviewAvg.toFixed(1)}/5 · Overall ${detail.overallScore.toFixed(1)}/5`,
+    summary: `Listen & Repeat ${formatSpeakingBand(detail.listenRepeatAvg)}/${SPEAKING_BAND_MAX} · Interview ${formatSpeakingBand(detail.interviewAvg)}/${SPEAKING_BAND_MAX} · Overall ${formatSpeakingBand(detail.overallScore)}/${SPEAKING_BAND_MAX}`,
     mockExam: detail,
     overallFeedback: `Completed ${detail.listenRepeat.length} Listen & Repeat prompts and ${detail.interview.length} interview questions.`,
   });

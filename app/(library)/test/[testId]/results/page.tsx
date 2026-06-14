@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 import { QuestionProgressRow } from "@/components/dashboard/QuestionProgressRow";
 import { ScoreSummary } from "@/components/dashboard/ScoreSummary";
 import {
-  formatScore,
+  formatDisplayScore,
   getScoreBand,
   SCORE_BAND_TEXT,
+  toDisplayScore,
 } from "@/lib/testLibrary/scores";
 import { getTestSetById } from "@/lib/testLibrary";
+import { SPEAKING_BAND_MAX } from "@/lib/toeflSpeakingBand";
 
 export default function TestResultsPage({
   params,
@@ -100,7 +102,8 @@ export default function TestResultsPage({
             <h2 className="text-sm font-semibold text-slate-900">Score summary</h2>
             <ul className="mt-3 space-y-2">
               {completed.map((q) => {
-                const band = getScoreBand(q.score);
+                const display = toDisplayScore(q.score);
+                const band = getScoreBand(display);
                 return (
                   <li
                     key={q.label}
@@ -110,7 +113,7 @@ export default function TestResultsPage({
                     <span
                       className={`font-medium tabular-nums ${SCORE_BAND_TEXT[band]}`}
                     >
-                      {formatScore(q.score)}/5
+                      {formatDisplayScore(q.score)}/{SPEAKING_BAND_MAX}
                     </span>
                   </li>
                 );

@@ -98,34 +98,47 @@ export interface AnalysisResultRow<T extends ExamRecordingRef, A> {
 /** Merge newly scored rows with prior results so every question appears once. */
 export function mergeExamAnalysisResults<
   T extends ExamRecordingRef,
-  A,
+  AL,
+  AI,
 >(
   allRecordings: T[],
-  newListenRepeat: AnalysisResultRow<T, A>[],
-  newInterview: AnalysisResultRow<T, A>[],
+  newListenRepeat: AnalysisResultRow<T, AL>[],
+  newInterview: AnalysisResultRow<T, AI>[],
   previous?: {
-    listenRepeat?: AnalysisResultRow<T, A>[];
-    interview?: AnalysisResultRow<T, A>[];
+    listenRepeat?: AnalysisResultRow<T, AL>[];
+    interview?: AnalysisResultRow<T, AI>[];
   } | null
 ): {
-  listenRepeat: AnalysisResultRow<T, A>[];
-  interview: AnalysisResultRow<T, A>[];
+  listenRepeat: AnalysisResultRow<T, AL>[];
+  interview: AnalysisResultRow<T, AI>[];
 } {
-  const mergeSection = (
+  const mergeSection = <A,>(
     items: T[],
     newRows: AnalysisResultRow<T, A>[],
     previousRows: AnalysisResultRow<T, A>[] | undefined
   ): AnalysisResultRow<T, A>[] =>
     items.map((pending) => {
       const key = recordingKey(pending);
+      const pendingPath =
+        "storagePath" in pending
+          ? (pending as { storagePath?: string }).storagePath
+          : undefined;
       const fromNew = newRows.find((row) => recordingKey(row.pending) === key);
       if (fromNew?.analysis) return fromNew;
       const fromOld = previousRows?.find(
         (row) => recordingKey(row.pending) === key
       );
-      if (fromOld?.analysis) return fromOld;
+      if (
+        fromOld?.analysis &&
+        (!pendingPath ||
+          !("storagePath" in fromOld.pending) ||
+          (fromOld.pending as { storagePath?: string }).storagePath ===
+            pendingPath)
+      ) {
+        return { pending, analysis: fromOld.analysis };
+      }
       if (fromNew) return fromNew;
-      if (fromOld) return fromOld;
+      if (fromOld && !fromOld.analysis) return { pending };
       return { pending };
     });
 
@@ -155,6 +168,47 @@ export function formatAnalysisError(message: string): string {
     return `${message} Make sure the Python API is running on port 8000.`;
   }
   return message;
+}
+
+export const LOW_MIC_QUALITY_HINT =
+  "Microphone level was too low — nothing usable may have been captured. Check your input device, speak closer to the mic, and use headphones if the prompt plays through speakers.";
+
+/** Peak mic RMS (0–1) below this suggests silence or wrong input device. */
+export const MIN_RECORDING_PEAK_LEVEL = 0.04;
+
+/** WebM with only a container header and no speech is typically ~8–10KB. */
+export const MIN_RECORDING_BLOB_BYTES = 10_000;
+
+/**
+ * Heuristic for exam recordings: UI level meters can show activity while
+ * MediaRecorder captured almost nothing — use peak level AND file size.
+ */
+export function isLowMicQualityRecording(params: {
+  examMode: boolean;
+  durationMs: number;
+  peakLevel: number;
+  blobSize: number;
+}): boolean {
+  const { examMode, durationMs, peakLevel, blobSize } = params;
+  if (!examMode || durationMs < 1500) return false;
+
+  if (blobSize < MIN_RECORDING_BLOB_BYTES) return true;
+
+  const expectedMinBytes =
+    8_000 + Math.floor((durationMs / 1000) * 2_000);
+  return peakLevel < MIN_RECORDING_PEAK_LEVEL && blobSize < expectedMinBytes;
+}
+
+export function buildLowMicQualityWarning(
+  recordings: Array<{ title: string; lowMicQuality?: boolean }>
+): string | null {
+  const flagged = recordings.filter((r) => r.lowMicQuality);
+  if (flagged.length === 0) return null;
+  if (flagged.length === 1) {
+    return `${flagged[0]!.title}: ${LOW_MIC_QUALITY_HINT}`;
+  }
+  const titles = flagged.map((r) => r.title).join(", ");
+  return `${flagged.length} recordings (${titles}) may have low mic levels. ${LOW_MIC_QUALITY_HINT}`;
 }
 
 export function buildBatchAnalysisErrorMessage(

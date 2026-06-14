@@ -12,6 +12,8 @@ import { FeedbackCard } from "@/components/FeedbackCard";
 
 import { InterviewQuestionPanel } from "@/components/InterviewQuestionPanel";
 
+import { interviewScoresToBand } from "@/components/InterviewScoreCard";
+
 import { InterviewScoreCard } from "@/components/InterviewScoreCard";
 
 import { ListenRepeatVisualPanel } from "@/components/ListenRepeatVisualPanel";
@@ -35,10 +37,6 @@ import {
   type RecordingStatus,
 
 } from "@/components/RecordButton";
-
-import { analyzeInterview } from "@/lib/analyzeInterview";
-
-import { analyzeSpeech } from "@/lib/analyzeSpeech";
 
 import type { AnalyzeInterviewResponse } from "@/lib/analyze-interview-types";
 
@@ -75,6 +73,12 @@ import {
 } from "@/lib/localHistory";
 
 import {
+  formatSpeakingBand,
+  itemScoresToSpeakingBand,
+  SPEAKING_BAND_MAX,
+} from "@/lib/toeflSpeakingBand";
+
+import {
 
   buildExamPlanForTest,
 
@@ -88,6 +92,8 @@ import {
 
   buildBatchAnalysisErrorMessage,
 
+  buildLowMicQualityWarning,
+
   dedupeRecordings,
 
   getExpectedRecordingCount,
@@ -96,9 +102,37 @@ import {
 
   mergeExamAnalysisResults,
 
+  recordingKey,
+
   upsertRecording,
 
 } from "@/lib/examRecordings";
+
+import {
+
+  applyPipelineOutcome,
+
+  analyzeExamRecordingsParallel,
+
+  clearPipelineEntry,
+
+  countPipelineInFlight,
+
+  countPipelineScored,
+
+  emptyPipelinePartial,
+
+  ExamAnalysisPipeline,
+
+  getPipelineAnalysis,
+
+  needsPipelineAnalysis,
+
+  PIPELINE_MAX_CONCURRENT,
+
+  type PipelinePartialResults,
+
+} from "@/lib/examPipelineAnalysis";
 
 import {
 
@@ -112,7 +146,7 @@ import {
 
 } from "@/lib/examSessionPersistence";
 
-import { refreshSignedAudioUrl, uploadAudioWithMeta } from "@/lib/uploadAudio";
+import { uploadAudioWithMeta } from "@/lib/uploadAudio";
 import { getInterviewSectionImageUrl } from "@/lib/visualAssets";
 
 
@@ -172,6 +206,8 @@ interface PendingRecording {
   storagePath: string;
 
   durationMs: number;
+
+  lowMicQuality?: boolean;
 
 }
 
@@ -290,9 +326,51 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const [sessionNote, setSessionNote] = useState<string | null>(null);
 
+  const [partialResults, setPartialResults] = useState<PipelinePartialResults>(
+
+    () => emptyPipelinePartial()
+
+  );
+
+  const [draftReady, setDraftReady] = useState(false);
+
+  const [recordingError, setRecordingError] = useState<string | null>(null);
 
 
-  const sessionHydratedRef = useRef(false);
+
+  const wantScoringRef = useRef(wantScoring);
+
+  wantScoringRef.current = wantScoring;
+
+  const partialResultsRef = useRef(partialResults);
+
+  partialResultsRef.current = partialResults;
+
+  const pipelineRef = useRef<ExamAnalysisPipeline | null>(null);
+
+  const restoredPipelineEnqueueRef = useRef(false);
+
+  if (!pipelineRef.current) {
+
+    pipelineRef.current = new ExamAnalysisPipeline({
+
+      maxConcurrent: PIPELINE_MAX_CONCURRENT,
+
+      onItemDone: (recording, outcome) => {
+
+        setPartialResults((prev) =>
+
+          applyPipelineOutcome(prev, recording, outcome)
+
+        );
+
+      },
+
+    });
+
+  }
+
+
 
   const responseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -316,9 +394,29 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       setRecordings(restored);
 
-      setLrIndex(draft.lrIndex);
+      setLrIndex(
 
-      setIvIndex(draft.ivIndex);
+        Math.min(
+
+          Math.max(0, draft.lrIndex),
+
+          Math.max(0, plan.listenRepeat.length - 1)
+
+        )
+
+      );
+
+      setIvIndex(
+
+        Math.min(
+
+          Math.max(0, draft.ivIndex),
+
+          Math.max(0, plan.interviewSession.questions.length - 1)
+
+        )
+
+      );
 
       setWantScoring(draft.wantScoring);
 
@@ -333,6 +431,22 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
       if (draft.results) {
 
         setResults(draft.results as ExamResults);
+
+      }
+
+      if (draft.partialResults) {
+
+        setPartialResults({
+
+          listenRepeat: (draft.partialResults.listenRepeat ??
+
+            []) as PipelinePartialResults["listenRepeat"],
+
+          interview: (draft.partialResults.interview ??
+
+            []) as PipelinePartialResults["interview"],
+
+        });
 
       }
 
@@ -364,9 +478,61 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     }
 
-    sessionHydratedRef.current = true;
+    setDraftReady(true);
 
   }, [testId, mode, plan]);
+
+
+
+  useEffect(() => {
+
+    if (!draftReady || restoredPipelineEnqueueRef.current) return;
+
+    restoredPipelineEnqueueRef.current = true;
+
+    if (!wantScoring) return;
+
+    const forScoring = getScoringRecordings(recordings, plan, mode);
+
+    for (const recording of forScoring) {
+
+      if (getPipelineAnalysis(partialResultsRef.current, recording)) continue;
+
+      const key = recordingKey(recording);
+
+      const row =
+
+        recording.kind === "listen_repeat"
+
+          ? partialResultsRef.current.listenRepeat.find(
+
+              (r) => recordingKey(r.pending) === key
+
+            )
+
+          : partialResultsRef.current.interview.find(
+
+              (r) => recordingKey(r.pending) === key
+
+            );
+
+      if (
+
+        row?.error &&
+
+        row.pending.storagePath === recording.storagePath
+
+      ) {
+
+        continue;
+
+      }
+
+      pipelineRef.current?.enqueue(recording);
+
+    }
+
+  }, [draftReady, wantScoring, recordings, plan, mode]);
 
 
 
@@ -378,13 +544,21 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   );
 
+  const micQualityWarning = useMemo(
+
+    () => buildLowMicQualityWarning(scoringRecordings),
+
+    [scoringRecordings]
+
+  );
+
   const expectedRecordingCount = getExpectedRecordingCount(mode);
 
 
 
   useEffect(() => {
 
-    if (!sessionHydratedRef.current) return;
+    if (!draftReady) return;
 
     saveExamDraft({
 
@@ -403,6 +577,18 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
       recordings: dedupeRecordings(recordings),
 
       results,
+
+      partialResults: {
+
+        listenRepeat: partialResults.listenRepeat,
+
+        interview: partialResults.interview,
+
+        summary: null,
+
+        scored: false,
+
+      },
 
       wantScoring,
 
@@ -436,6 +622,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     results,
 
+    partialResults,
+
     wantScoring,
 
     prepChoice,
@@ -445,6 +633,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
     showHint,
 
     errorMessage,
+
+    draftReady,
 
   ]);
 
@@ -564,7 +754,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     ) => {
 
-      if (analysisInFlightRef.current || pending.length === 0) return;
+      if (analysisInFlightRef.current) return;
+
+      const allRecordings = options?.allRecordings ?? pending;
+
+      if (allRecordings.length === 0) return;
 
       analysisInFlightRef.current = true;
 
@@ -572,11 +766,43 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       setStage("analyzing");
 
+
+
+      const pipelineMerge: ExamResults | null = options?.mergeFrom ?? {
+
+        listenRepeat: partialResultsRef.current.listenRepeat,
+
+        interview: partialResultsRef.current.interview,
+
+        summary: null,
+
+        scored: false,
+
+      };
+
+
+
+      const alreadyScored =
+
+        (pipelineMerge?.listenRepeat.filter((r) => r.analysis).length ?? 0) +
+
+        (pipelineMerge?.interview.filter((r) => r.analysis).length ?? 0);
+
+      const toAnalyze = pending.filter((item) =>
+
+        needsPipelineAnalysis(partialResultsRef.current, item)
+
+      );
+
+      const totalWork = allRecordings.length;
+
+
+
       setAnalyzeProgress({
 
-        done: 0,
+        done: alreadyScored,
 
-        total: pending.length,
+        total: totalWork,
 
         currentTitle: null,
 
@@ -586,170 +812,147 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-      const lrResults: ExamResults["listenRepeat"] = [];
-
-      const ivResults: ExamResults["interview"] = [];
-
       const failures: Array<{ title: string; message: string }> = [];
-
-      const allRecordings = options?.allRecordings ?? pending;
 
 
 
       try {
 
-        for (let i = 0; i < pending.length; i += 1) {
-
-          const item = pending[i]!;
-
-          setAnalyzeProgress({
-
-            done: i,
-
-            total: pending.length,
-
-            currentTitle: item.title,
-
-            jobStatus: "starting",
-
-          });
+        await pipelineRef.current?.waitForIdle();
 
 
 
-          let audioUrl = item.audioUrl;
+        const parallelResults =
 
-          try {
+          toAnalyze.length > 0
 
-            audioUrl = await refreshSignedAudioUrl(item.storagePath);
+            ? await analyzeExamRecordingsParallel(toAnalyze, {
 
-          } catch {
+                maxConcurrent: PIPELINE_MAX_CONCURRENT,
 
-            // Keep the URL captured at upload time if refresh fails.
+                onProgress: (done, _total, title) => {
 
-          }
+                  setAnalyzeProgress({
 
+                    done: alreadyScored + done,
 
+                    total: totalWork,
 
-          const itemWithUrl = { ...item, audioUrl };
+                    currentTitle: title,
 
-          const pollOptions = {
+                    jobStatus: title ? "running" : null,
 
-            onStatus: (status: string) => {
-
-              setAnalyzeProgress((prev) => ({
-
-                ...prev,
-
-                jobStatus: status,
-
-              }));
-
-            },
-
-          };
-
-
-
-          try {
-
-            if (item.kind === "listen_repeat") {
-
-              const analysis = await analyzeSpeech(
-
-                {
-
-                  audioUrl: itemWithUrl.audioUrl,
-
-                  storagePath: itemWithUrl.storagePath,
-
-                  original: itemWithUrl.original ?? itemWithUrl.promptText,
-
-                  promptId: itemWithUrl.promptId,
+                  });
 
                 },
 
-                pollOptions
+                onStatus: (status) => {
 
-              );
+                  setAnalyzeProgress((prev) => ({
 
-              lrResults.push({ pending: itemWithUrl, analysis });
+                    ...prev,
 
-            } else {
+                    jobStatus: status,
 
-              const analysis = await analyzeInterview(
-
-                {
-
-                  audioUrl: itemWithUrl.audioUrl,
-
-                  storagePath: itemWithUrl.storagePath,
-
-                  prompt: itemWithUrl.promptText,
-
-                  questionId: itemWithUrl.questionId,
-
-                  responseSeconds: itemWithUrl.responseSeconds,
-
-                  durationMs: itemWithUrl.durationMs,
+                  }));
 
                 },
 
-                pollOptions
+              })
 
-              );
+            : [];
 
-              ivResults.push({ pending: itemWithUrl, analysis });
 
-            }
 
-          } catch (err) {
+        const lrResults: ExamResults["listenRepeat"] = [];
 
-            const message =
+        const ivResults: ExamResults["interview"] = [];
 
-              err instanceof Error ? err.message : "Analysis failed.";
 
-            failures.push({ title: item.title, message });
 
-            if (item.kind === "listen_repeat") {
+        for (const row of parallelResults) {
 
-              lrResults.push({ pending: itemWithUrl });
+          if (row.error) {
 
-            } else {
-
-              ivResults.push({ pending: itemWithUrl });
-
-            }
+            failures.push({ title: row.pending.title, message: row.error });
 
           }
 
+          if (row.pending.kind === "listen_repeat") {
+
+            lrResults.push(
+
+              row.analysis
+
+                ? { pending: row.pending, analysis: row.analysis as AnalyzeSpeechResponse }
+
+                : { pending: row.pending }
+
+            );
+
+          } else {
+
+            ivResults.push(
+
+              row.analysis
+
+                ? {
+
+                    pending: row.pending,
+
+                    analysis: row.analysis as AnalyzeInterviewResponse,
+
+                  }
+
+                : { pending: row.pending }
+
+            );
+
+          }
+
+        }
 
 
-          setAnalyzeProgress({
 
-            done: i + 1,
+        for (const row of partialResultsRef.current.listenRepeat) {
 
-            total: pending.length,
+          if (row.error && !row.analysis) {
 
-            currentTitle: null,
+            failures.push({
 
-            jobStatus: null,
+              title: row.pending.title,
 
-          });
+              message: row.error,
+
+            });
+
+          }
+
+        }
+
+        for (const row of partialResultsRef.current.interview) {
+
+          if (row.error && !row.analysis) {
+
+            failures.push({
+
+              title: row.pending.title,
+
+              message: row.error,
+
+            });
+
+          }
 
         }
 
 
 
         const merged = mergeExamAnalysisResults(
-
           allRecordings,
-
           lrResults,
-
           ivResults,
-
-          options?.mergeFrom ?? null
-
+          pipelineMerge
         );
 
         const scoredCount =
@@ -777,15 +980,10 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
       } catch (err) {
 
         const merged = mergeExamAnalysisResults(
-
           allRecordings,
-
-          lrResults,
-
-          ivResults,
-
-          options?.mergeFrom ?? null
-
+          [],
+          [],
+          pipelineMerge
         );
 
         setErrorMessage(
@@ -874,46 +1072,25 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+    const lrItemScores = listenRepeatDetails.map((d) => d.score);
+
+    const ivItemScores = interviewDetails.map((d) =>
+      interviewScoresAverage(d.scores)
+    );
+
+    const allItemScores = [...lrItemScores, ...ivItemScores];
+
     const listenRepeatAvg =
-
-      listenRepeatDetails.length > 0
-
-        ? listenRepeatDetails.reduce((s, d) => s + d.score, 0) /
-
-          listenRepeatDetails.length
-
+      lrItemScores.length > 0
+        ? itemScoresToSpeakingBand(lrItemScores)
         : 0;
-
-
 
     const interviewAvg =
-
-      interviewDetails.length > 0
-
-        ? interviewDetails.reduce(
-
-            (s, d) => s + interviewScoresAverage(d.scores),
-
-            0
-
-          ) / interviewDetails.length
-
-        : 0;
-
-
-
-    const scoredSections =
-
-      (listenRepeatDetails.length > 0 ? 1 : 0) +
-
-      (interviewDetails.length > 0 ? 1 : 0);
+      ivItemScores.length > 0 ? itemScoresToSpeakingBand(ivItemScores) : 0;
 
     const overallScore =
-
-      scored && scoredSections > 0
-
-        ? (listenRepeatAvg + interviewAvg) / scoredSections
-
+      scored && allItemScores.length > 0
+        ? itemScoresToSpeakingBand(allItemScores)
         : 0;
 
 
@@ -930,11 +1107,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
           interview: interviewDetails,
 
-          listenRepeatAvg: Math.round(listenRepeatAvg * 10) / 10,
+          listenRepeatAvg,
 
-          interviewAvg: Math.round(interviewAvg * 10) / 10,
+          interviewAvg,
 
-          overallScore: Math.round(overallScore * 10) / 10,
+          overallScore,
 
         }
 
@@ -1014,6 +1191,16 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       clearResponseTimer();
 
+      setRecordingError(null);
+
+
+
+      const captureStage = stage;
+
+      const captureLr = currentLrPrompt;
+
+      const captureIv = currentIvQuestion;
+
 
 
       try {
@@ -1034,21 +1221,25 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-        if (stage === "lr_recording" && currentLrPrompt) {
+        URL.revokeObjectURL(result.url);
+
+
+
+        if (captureStage === "lr_recording" && captureLr) {
 
           const pending: PendingRecording = {
 
             kind: "listen_repeat",
 
-            promptId: currentLrPrompt.id,
+            promptId: captureLr.id,
 
-            promptText: currentLrPrompt.transcript,
+            promptText: captureLr.transcript,
 
-            original: currentLrPrompt.transcript,
+            original: captureLr.transcript,
 
-            title: currentLrPrompt.title,
+            title: captureLr.title,
 
-            responseSeconds: getListenRepeatRecordingSeconds(currentLrPrompt),
+            responseSeconds: getListenRepeatRecordingSeconds(captureLr),
 
             audioUrl: storedUrl,
 
@@ -1056,27 +1247,47 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             durationMs: result.durationMs,
 
+            lowMicQuality: result.lowMicQuality,
+
           };
 
 
 
           setRecordings((prev) => upsertRecording(prev, pending));
 
+          if (wantScoringRef.current) {
+
+            const cleared = clearPipelineEntry(
+
+              partialResultsRef.current,
+
+              pending
+
+            );
+
+            partialResultsRef.current = cleared;
+
+            setPartialResults(cleared);
+
+            pipelineRef.current?.enqueue(pending);
+
+          }
+
           setStage("lr_item_complete");
 
-        } else if (stage === "iv_recording" && currentIvQuestion) {
+        } else if (captureStage === "iv_recording" && captureIv) {
 
           const pending: PendingRecording = {
 
             kind: "interview",
 
-            questionId: currentIvQuestion.id,
+            questionId: captureIv.id,
 
-            promptText: currentIvQuestion.prompt,
+            promptText: captureIv.prompt,
 
-            title: currentIvQuestion.taskLabel,
+            title: captureIv.taskLabel,
 
-            responseSeconds: currentIvQuestion.responseSeconds,
+            responseSeconds: captureIv.responseSeconds,
 
             audioUrl: storedUrl,
 
@@ -1084,23 +1295,53 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             durationMs: result.durationMs,
 
+            lowMicQuality: result.lowMicQuality,
+
           };
 
 
 
           setRecordings((prev) => upsertRecording(prev, pending));
 
+          if (wantScoringRef.current) {
+
+            const cleared = clearPipelineEntry(
+
+              partialResultsRef.current,
+
+              pending
+
+            );
+
+            partialResultsRef.current = cleared;
+
+            setPartialResults(cleared);
+
+            pipelineRef.current?.enqueue(pending);
+
+          }
+
           setStage("iv_item_complete");
+
+        } else {
+
+          setRecordingError(
+
+            "Recording uploaded but could not be matched to the current question. Try again."
+
+          );
 
         }
 
       } catch (err) {
 
-        setErrorMessage(
+        const message =
 
-          err instanceof Error ? err.message : "Upload failed."
+          err instanceof Error ? err.message : "Upload failed.";
 
-        );
+        setRecordingError(message);
+
+        setErrorMessage(message);
 
       } finally {
 
@@ -1113,6 +1354,22 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
     [stage, currentLrPrompt, currentIvQuestion, testId, clearResponseTimer]
 
   );
+
+
+
+  const retryCurrentRecording = useCallback(() => {
+
+    setRecordingError(null);
+
+    setErrorMessage(null);
+
+    setRecordingStatus("idle");
+
+    setResponseTimeLeft(activeResponseSeconds);
+
+    setStartSignal((n) => n + 1);
+
+  }, [activeResponseSeconds]);
 
 
 
@@ -1166,17 +1423,19 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     const normalized = getScoringRecordings(recordings, plan, mode);
 
+    const removedDupes = recordings.length - normalized.length;
+
     if (normalized.length !== recordings.length) {
 
       setRecordings(normalized);
 
     }
 
-    if (recordings.length > normalized.length) {
+    if (removedDupes > 0) {
 
       setSessionNote(
 
-        `Scoring ${normalized.length} question${normalized.length === 1 ? "" : "s"} (${recordings.length - normalized.length} extra duplicate take${recordings.length - normalized.length === 1 ? "" : "s"} ignored).`
+        `Scoring ${normalized.length} question${normalized.length === 1 ? "" : "s"} (${removedDupes} extra duplicate take${removedDupes === 1 ? "" : "s"} ignored).`
 
       );
 
@@ -1193,6 +1452,32 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
     }
 
   };
+
+
+
+  const pipelineScoredCount = useMemo(
+
+    () => countPipelineScored(partialResults),
+
+    [partialResults]
+
+  );
+
+
+
+  const backgroundScoringPending = useMemo(
+
+    () =>
+
+      wantScoring
+
+        ? countPipelineInFlight(partialResults, scoringRecordings)
+
+        : 0,
+
+    [wantScoring, partialResults, scoringRecordings]
+
+  );
 
 
 
@@ -1276,7 +1561,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-    void runBatchAnalysis(all, { allRecordings: all });
+    setPartialResults(emptyPipelinePartial());
+
+    pipelineRef.current?.reset();
+
+    void runBatchAnalysis(all, { allRecordings: all, mergeFrom: null });
 
   };
 
@@ -1430,13 +1719,21 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     clearExamDraft(testId, mode);
 
+    pipelineRef.current?.reset();
+
+    restoredPipelineEnqueueRef.current = false;
+
     setSessionNote(null);
 
     setRecordings([]);
 
     setResults(null);
 
+    setPartialResults(emptyPipelinePartial());
+
     setErrorMessage(null);
+
+    setRecordingError(null);
 
     setLrIndex(0);
 
@@ -1936,6 +2233,18 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             </p>
 
+            {wantScoring && backgroundScoringPending > 0 && (
+
+              <p className="mt-2 text-xs text-slate-400">
+
+                Scoring in background ({pipelineScoredCount} of{" "}
+
+                {scoringRecordings.length} done)…
+
+              </p>
+
+            )}
+
             <button
 
               type="button"
@@ -2178,6 +2487,18 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             </p>
 
+            {wantScoring && backgroundScoringPending > 0 && (
+
+              <p className="mt-2 text-xs text-slate-400">
+
+                Scoring in background ({pipelineScoredCount} of{" "}
+
+                {scoringRecordings.length} done)…
+
+              </p>
+
+            )}
+
             <button
 
               type="button"
@@ -2290,6 +2611,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             hideControls
 
+            examMode
+
             className="sr-only"
 
             onStatusChange={setRecordingStatus}
@@ -2298,11 +2621,13 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             onRecordingComplete={handleRecordingComplete}
 
-            onError={(err) =>
+            onError={(err) => {
 
-              setErrorMessage(err.message)
+              setRecordingError(err.message);
 
-            }
+              setErrorMessage(err.message);
+
+            }}
 
             startSignal={startSignal}
 
@@ -2346,13 +2671,53 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+        {isRecordingStage &&
+
+          (recordingError || recordingStatus === "error") && (
+
+            <section className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm">
+
+              <p className="font-medium text-red-800">Recording failed</p>
+
+              <p className="mt-1 text-xs text-red-700">
+
+                {recordingError ?? errorMessage}
+
+              </p>
+
+              <button
+
+                type="button"
+
+                onClick={retryCurrentRecording}
+
+                className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-xs font-medium text-white"
+
+              >
+
+                Retry recording
+
+              </button>
+
+            </section>
+
+          )}
+
+
+
         {stage === "analyzing" && (
 
           <section className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
 
             <p className="text-sm font-medium text-slate-900">
 
-              Transcribing and analyzing your responses…
+              {analyzeProgress.done >= analyzeProgress.total &&
+
+              analyzeProgress.total > 0
+
+                ? "Finalizing your scores…"
+
+                : "Finishing analysis…"}
 
             </p>
 
@@ -2408,6 +2773,18 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
           <>
 
+            {micQualityWarning && (
+
+              <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+
+                <p className="font-medium">Microphone level warning</p>
+
+                <p className="mt-1 text-xs text-amber-800">{micQualityWarning}</p>
+
+              </section>
+
+            )}
+
             {results.scored && results.summary ? (
 
               <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -2424,7 +2801,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                       <p className="mt-1 text-2xl font-semibold">
 
-                        {results.summary.listenRepeatAvg}/5
+                        {formatSpeakingBand(results.summary.listenRepeatAvg)}/{SPEAKING_BAND_MAX}
 
                       </p>
 
@@ -2440,7 +2817,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                       <p className="mt-1 text-2xl font-semibold">
 
-                        {results.summary.interviewAvg}/5
+                        {formatSpeakingBand(results.summary.interviewAvg)}/{SPEAKING_BAND_MAX}
 
                       </p>
 
@@ -2450,13 +2827,13 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                   <div className="rounded-lg bg-slate-900 p-4 text-center text-white">
 
-                    <p className="text-xs text-slate-300">Overall</p>
+                    <p className="text-xs text-slate-300">Overall Speaking</p>
 
                     <p className="mt-1 text-2xl font-semibold">
 
-                      {results.summary.overallScore}/5
+                      {formatSpeakingBand(results.summary.overallScore)}/{SPEAKING_BAND_MAX}
 
-                    </p>
+                      </p>
 
                   </div>
 
@@ -2604,7 +2981,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                         <span className="ml-2 text-slate-500">
 
-                          · {interviewScoresAverage(analysis.scores)}/5
+                          · {formatSpeakingBand(interviewScoresToBand(analysis.scores))}/{SPEAKING_BAND_MAX}
 
                         </span>
 

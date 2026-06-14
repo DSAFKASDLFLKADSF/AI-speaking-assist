@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isLowMicQualityRecording } from "@/lib/examRecordings";
 
 export type RecordingStatus =
   | "idle"
@@ -14,6 +15,10 @@ export interface RecordingResult {
   url: string;
   mimeType: string;
   durationMs: number;
+  /** Peak mic level 0–1 while recording (exam diagnostics). */
+  peakLevel?: number;
+  /** Exam mode: mic level or file size suggests little/no speech was captured. */
+  lowMicQuality?: boolean;
 }
 
 export interface RecordButtonProps {
@@ -29,6 +34,8 @@ export interface RecordButtonProps {
   stopSignal?: number;
   /** Hide manual start/stop — exam automation only */
   hideControls?: boolean;
+  /** Exam mode: lighter noise processing, flags low mic level (does not block). */
+  examMode?: boolean;
   /** Called when mic stream is live (for level meters) */
   onStreamReady?: (stream: MediaStream | null) => void;
   className?: string;
@@ -86,6 +93,7 @@ export function RecordButton({
   startSignal = 0,
   stopSignal = 0,
   hideControls = false,
+  examMode = false,
   onStreamReady,
   className = "",
 }: RecordButtonProps) {
@@ -100,6 +108,10 @@ export function RecordButton({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingStopRef = useRef(false);
   const stopRecordingRef = useRef<() => void>(() => undefined);
+  const mountedRef = useRef(true);
+  const peakLevelRef = useRef(0);
+  const levelContextRef = useRef<AudioContext | null>(null);
+  const levelRafRef = useRef(0);
 
   const updateStatus = useCallback(
     (next: RecordingStatus) => {
@@ -109,11 +121,55 @@ export function RecordButton({
     [onStatusChange]
   );
 
+  const clearLevelMonitor = useCallback(() => {
+    if (levelRafRef.current) {
+      cancelAnimationFrame(levelRafRef.current);
+      levelRafRef.current = 0;
+    }
+    if (levelContextRef.current) {
+      void levelContextRef.current.close();
+      levelContextRef.current = null;
+    }
+    peakLevelRef.current = 0;
+  }, []);
+
+  const startLevelMonitor = useCallback((stream: MediaStream) => {
+    clearLevelMonitor();
+    peakLevelRef.current = 0;
+    const ctx = new AudioContext();
+    levelContextRef.current = ctx;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i += 1) {
+        const v = (data[i]! - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const level = Math.min(1, rms * 4);
+      if (level > peakLevelRef.current) {
+        peakLevelRef.current = level;
+      }
+      levelRafRef.current = requestAnimationFrame(tick);
+    };
+
+    void ctx.resume().then(() => {
+      levelRafRef.current = requestAnimationFrame(tick);
+    });
+  }, [clearLevelMonitor]);
+
   const stopStream = useCallback(() => {
+    clearLevelMonitor();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     onStreamReady?.(null);
-  }, [onStreamReady]);
+  }, [onStreamReady, clearLevelMonitor]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -158,14 +214,34 @@ export function RecordButton({
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: examMode
+          ? {
+              echoCancellation: true,
+              noiseSuppression: false,
+              autoGainControl: true,
+            }
+          : {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
       });
+
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      if (pendingStopRef.current) {
+        pendingStopRef.current = false;
+        stream.getTracks().forEach((track) => track.stop());
+        updateStatus("idle");
+        return;
+      }
+
       streamRef.current = stream;
       onStreamReady?.(stream);
+      startLevelMonitor(stream);
       chunksRef.current = [];
 
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -183,11 +259,13 @@ export function RecordButton({
 
       mediaRecorder.onstop = () => {
         clearTimer();
-        stopStream();
 
         const durationMs = Date.now() - recordingStartRef.current;
+        const peakLevel = peakLevelRef.current;
+
+        stopStream();
+
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        const url = URL.createObjectURL(blob);
 
         chunksRef.current = [];
         mediaRecorderRef.current = null;
@@ -205,11 +283,27 @@ export function RecordButton({
           return;
         }
 
-        onRecordingComplete?.({ blob, url, mimeType, durationMs });
+        const url = URL.createObjectURL(blob);
+
+        const lowMicQuality = isLowMicQualityRecording({
+          examMode,
+          durationMs,
+          peakLevel,
+          blobSize: blob.size,
+        });
+
+        onRecordingComplete?.({
+          blob,
+          url,
+          mimeType,
+          durationMs,
+          peakLevel,
+          lowMicQuality,
+        });
         updateStatus("idle");
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       recordingStartRef.current = Date.now();
       setElapsedMs(0);
 
@@ -239,12 +333,14 @@ export function RecordButton({
     handleError,
     clearTimer,
     stopStream,
+    examMode,
+    startLevelMonitor,
   ]);
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
     if (!recorder) {
-      pendingStopRef.current = false;
+      pendingStopRef.current = true;
       return;
     }
 
@@ -272,6 +368,13 @@ export function RecordButton({
   }, [updateStatus, clearTimer]);
 
   stopRecordingRef.current = stopRecording;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const handleToggle = () => {
     if (status === "recording") {

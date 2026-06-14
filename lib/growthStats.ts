@@ -6,6 +6,11 @@ import {
   type UnifiedHistoryItem,
 } from "@/lib/unifiedHistory";
 import type { PracticeHistoryItem } from "@/lib/history-types";
+import {
+  formatSpeakingBand,
+  rawScoreToSpeakingBand,
+  SPEAKING_BAND_MAX,
+} from "@/lib/toeflSpeakingBand";
 
 export interface GrowthOverview {
   totalSessions: number;
@@ -70,16 +75,16 @@ function formatWeekLabel(key: string): string {
 
 function scoreFromItem(item: UnifiedHistoryItem): number | null {
   if (item.mode === "listen_repeat" && item.listenRepeatScore != null) {
-    return item.listenRepeatScore;
+    return rawScoreToSpeakingBand(item.listenRepeatScore);
   }
   if (item.mode === "interview" && item.interviewAvg != null) {
-    return item.interviewAvg;
+    return rawScoreToSpeakingBand(item.interviewAvg);
   }
   if (item.mode === "mock_exam" && item.mockExamOverall != null) {
     return item.mockExamOverall;
   }
   if (item.scaledScore != null) {
-    return round1(item.scaledScore / 6);
+    return rawScoreToSpeakingBand(item.scaledScore / 6);
   }
   return null;
 }
@@ -159,9 +164,9 @@ function buildWeeklyTrend(items: UnifiedHistoryItem[]): WeeklyBucket[] {
   });
 }
 
-function dimensionLevel(avg: number): DimensionInsight["level"] {
-  if (avg >= 4) return "strong";
-  if (avg >= 3) return "developing";
+function dimensionLevel(avgBand: number): DimensionInsight["level"] {
+  if (avgBand >= 5) return "strong";
+  if (avgBand >= 3.5) return "developing";
   return "focus";
 }
 
@@ -173,12 +178,14 @@ export function computeGrowthSummary(
   const listenRepeatScores = items
     .filter((i) => i.mode === "listen_repeat")
     .map((i) => i.listenRepeatScore)
-    .filter((s): s is number => s != null);
+    .filter((s): s is number => s != null)
+    .map(rawScoreToSpeakingBand);
 
   const interviewAvgs = items
     .filter((i) => i.mode === "interview")
     .map((i) => i.interviewAvg)
-    .filter((s): s is number => s != null);
+    .filter((s): s is number => s != null)
+    .map(rawScoreToSpeakingBand);
 
   const mockScores = items
     .filter((i) => i.mode === "mock_exam")
@@ -212,7 +219,7 @@ export function computeGrowthSummary(
 
   const dimensionInsights: DimensionInsight[] = dimensionKeys.map(
     ({ key, label }) => {
-      const vals = interviewScores.map((s) => s[key]);
+      const vals = interviewScores.map((s) => rawScoreToSpeakingBand(s[key]));
       const avg = average(vals) ?? 0;
       return { label, average: avg, level: dimensionLevel(avg) };
     }
@@ -245,9 +252,9 @@ export function computeGrowthSummary(
       `Completed ${overview.mockExamCount} full mock exam${overview.mockExamCount > 1 ? "s" : ""}.`
     );
   }
-  if (overview.avgListenRepeat != null && overview.avgListenRepeat >= 4) {
+  if (overview.avgListenRepeat != null && overview.avgListenRepeat >= 5) {
     highlights.push(
-      `Listen & Repeat average is ${overview.avgListenRepeat}/5 — strong shadowing accuracy.`
+      `Listen & Repeat average is ${formatSpeakingBand(overview.avgListenRepeat)}/${SPEAKING_BAND_MAX} — strong shadowing accuracy.`
     );
   }
 
@@ -255,10 +262,14 @@ export function computeGrowthSummary(
   const focusDims = dimensionInsights.filter((d) => d.level === "focus");
 
   for (const d of strongDims.slice(0, 2)) {
-    highlights.push(`${d.label} is a relative strength (${d.average}/5).`);
+    highlights.push(
+      `${d.label} is a relative strength (${formatSpeakingBand(d.average)}/${SPEAKING_BAND_MAX}).`
+    );
   }
   for (const d of focusDims.slice(0, 2)) {
-    focusAreas.push(`Invest more time in ${d.label} (avg ${d.average}/5).`);
+    focusAreas.push(
+      `Invest more time in ${d.label} (avg ${formatSpeakingBand(d.average)}/${SPEAKING_BAND_MAX}).`
+    );
   }
 
   if (focusAreas.length === 0 && overview.avgInterview != null) {
@@ -285,7 +296,7 @@ export function computeGrowthSummary(
 
   const narrative = `Across ${overview.totalSessions} session${overview.totalSessions === 1 ? "" : "s"} on ${overview.practiceDays} day${overview.practiceDays === 1 ? "" : "s"}, you are building measurable speaking practice.${trendNote}${
     overview.avgMockExam != null
-      ? ` Mock exam average: ${overview.avgMockExam}/5.`
+      ? ` Mock exam average: ${overview.avgMockExam?.toFixed(1)}/6.`
       : ""
   } Keep alternating Listen & Repeat precision work with timed interview responses.`;
 

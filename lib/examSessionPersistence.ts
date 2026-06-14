@@ -12,6 +12,7 @@ export interface PersistedPendingRecording {
   audioUrl: string;
   storagePath: string;
   durationMs: number;
+  lowMicQuality?: boolean;
 }
 
 export type PersistedExamStage =
@@ -53,6 +54,8 @@ export interface PersistedExamDraft {
   ivIndex: number;
   recordings: PersistedPendingRecording[];
   results: PersistedExamResults | null;
+  /** In-progress per-question scores (pipeline while taking the exam). */
+  partialResults?: PersistedExamResults | null;
   wantScoring: boolean;
   prepChoice: PrepTimeOption | "custom";
   customPrepSeconds: number;
