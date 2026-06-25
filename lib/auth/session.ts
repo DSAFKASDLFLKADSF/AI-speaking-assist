@@ -15,12 +15,12 @@ function getSecretKey(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-import { useDevDatabase } from "@/lib/devDb";
+import { isDevDatabaseEnabled } from "@/lib/devDb";
 
 export function isAuthConfigured(): boolean {
   const secret = process.env.AUTH_SECRET?.trim();
   if (!secret) return false;
-  return Boolean(process.env.DATABASE_URL?.trim()) || useDevDatabase();
+  return Boolean(process.env.DATABASE_URL?.trim()) || isDevDatabaseEnabled();
 }
 
 export interface SessionPayload {

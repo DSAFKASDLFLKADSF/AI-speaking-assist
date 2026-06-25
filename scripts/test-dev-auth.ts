@@ -1,6 +1,7 @@
-process.env.NODE_ENV = "development";
-process.env.AUTH_SECRET = process.env.AUTH_SECRET ?? "dev-test";
-
+const env = process.env as Record<string, string | undefined>;
+env.NODE_ENV = "development";
+env.AUTH_SECRET = env.AUTH_SECRET ?? "dev-test";
+delete env.DATABASE_URL;
 import { query } from "../lib/db";
 import { createUser } from "../lib/repositories/users";
 import { hashPassword } from "../lib/auth/password";

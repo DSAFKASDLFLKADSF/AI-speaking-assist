@@ -9,7 +9,7 @@ const globalForDevDb = globalThis as unknown as {
   devSchemaInitialized?: boolean;
 };
 
-export function useDevDatabase(): boolean {
+export function isDevDatabaseEnabled(): boolean {
   return (
     process.env.NODE_ENV === "development" &&
     !process.env.DATABASE_URL?.trim()
@@ -120,13 +120,15 @@ async function ensureDevSchema(): Promise<void> {
 }
 
 export async function getDevPool(): Promise<Pool> {
-  if (!globalForDevDb.devPool) {
-    await ensureDevSchema();
-    const db = getDevDb();
-    const { Pool: MemPool } = db.adapters.createPg();
-    globalForDevDb.devPool = new MemPool();
+  if (globalForDevDb.devPool) {
+    return globalForDevDb.devPool;
   }
-  return globalForDevDb.devPool;
+  await ensureDevSchema();
+  const db = getDevDb();
+  const { Pool: MemPool } = db.adapters.createPg();
+  const pool = new MemPool();
+  globalForDevDb.devPool = pool;
+  return pool;
 }
 
 export async function devQuery<T extends Record<string, unknown>>(

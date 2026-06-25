@@ -60,13 +60,6 @@ async function uploadAudioLocal(
   options: UploadAudioOptions
 ): Promise<UploadAudioResult> {
   const userId = await resolveUserId(options.userId, options.allowAnonymous);
-  const contentType = normalizeAudioContentType(blob.type || "audio/webm");
-  const storagePath = buildAudioStoragePath(
-    userId,
-    options.sessionId,
-    options.fileName,
-    contentType
-  );
 
   const formData = new FormData();
   formData.append("file", blob, options.fileName ?? "recording.webm");

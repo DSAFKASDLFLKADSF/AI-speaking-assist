@@ -2,19 +2,19 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import {
   devQuery,
   devWithTransaction,
-  useDevDatabase,
+  isDevDatabaseEnabled,
 } from "@/lib/devDb";
 
 let pool: Pool | undefined;
 
 export function isDatabaseConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL?.trim()) || useDevDatabase();
+  return Boolean(process.env.DATABASE_URL?.trim()) || isDevDatabaseEnabled();
 }
 
 export function getPool(): Pool {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) {
-    if (useDevDatabase()) {
+    if (isDevDatabaseEnabled()) {
       throw new Error(
         "Dev database pool is async — use query()/withTransaction() instead of getPool() in dev mode."
       );
@@ -35,7 +35,7 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[]
 ): Promise<T[]> {
-  if (useDevDatabase()) {
+  if (isDevDatabaseEnabled()) {
     return devQuery<T>(text, params);
   }
   const result = await getPool().query<T>(text, params);
@@ -53,7 +53,7 @@ export async function queryOne<T extends QueryResultRow = QueryResultRow>(
 export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
-  if (useDevDatabase()) {
+  if (isDevDatabaseEnabled()) {
     return devWithTransaction(fn);
   }
 
