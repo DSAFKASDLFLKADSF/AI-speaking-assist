@@ -3,44 +3,36 @@ import {
   PracticeSessionValidationError,
   createPracticeSession,
 } from "@/lib/createPracticeSession";
+import { AuthError, requireUser } from "@/lib/auth/getCurrentUser";
+import { isAuthConfigured } from "@/lib/auth/session";
 import type {
   CreatePracticeSessionRequest,
   CreatePracticeSessionResponse,
 } from "@/lib/session-types";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  if (!isAuthConfigured()) {
+    return NextResponse.json(
+      { error: "Auth is not configured on this server." },
+      { status: 503 }
+    );
+  }
+
   try {
     const body = (await request.json()) as CreatePracticeSessionRequest;
-
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError) {
-      return NextResponse.json(
-        { error: authError.message },
-        { status: 401 }
-      );
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "You must be logged in to create a practice session." },
-        { status: 401 }
-      );
-    }
-
-    const session = await createPracticeSession(supabase, user.id, body);
+    const user = await requireUser();
+    const session = await createPracticeSession(user.id, body);
 
     const response: CreatePracticeSessionResponse = { session };
 
     return NextResponse.json(response, { status: 201 });
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: 401 });
+    }
+
     if (err instanceof PracticeSessionValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }

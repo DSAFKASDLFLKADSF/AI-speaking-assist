@@ -1,6 +1,7 @@
 import type { ComparisonWord } from "@/components/ComparisonText";
 import type { FeedbackSection } from "@/components/FeedbackCard";
 import type { InterviewScores } from "@/components/InterviewScoreCard";
+import { rewriteAudioUrlForPythonFetch } from "@/lib/audioStorage";
 
 /** Payload sent to the Python speech analysis service. */
 export interface PythonAnalyzeSpeechRequest {
@@ -187,7 +188,10 @@ export async function createPythonListenRepeatJob(
 ): Promise<PythonJobCreatedResponse> {
   return callPythonApi<PythonJobCreatedResponse>(
     "/jobs/listen-repeat",
-    payload,
+    {
+      ...payload,
+      audio_url: rewriteAudioUrlForPythonFetch(payload.audio_url),
+    },
     (data) => Boolean((data as PythonJobCreatedResponse).job_id),
     "Python API returned an invalid job payload.",
     { timeoutMs: JOB_SUBMIT_TIMEOUT_MS }
@@ -200,7 +204,10 @@ export async function createPythonInterviewJob(
 ): Promise<PythonJobCreatedResponse> {
   return callPythonApi<PythonJobCreatedResponse>(
     "/jobs/interview",
-    payload,
+    {
+      ...payload,
+      audio_url: rewriteAudioUrlForPythonFetch(payload.audio_url),
+    },
     (data) => Boolean((data as PythonJobCreatedResponse).job_id),
     "Python API returned an invalid job payload.",
     { timeoutMs: JOB_SUBMIT_TIMEOUT_MS }

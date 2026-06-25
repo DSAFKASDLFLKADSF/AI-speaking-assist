@@ -14,9 +14,68 @@ function normalizeEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+/** Normalize Project URL from Supabase dashboard (Settings → API). */
+export function normalizeSupabaseUrl(raw: string | undefined): string | undefined {
+  let url = normalizeEnv(raw);
+  if (!url) return undefined;
+
+  // Common copy-paste mistakes (Dashboard API tab, curl examples, etc.)
+  url = url.replace(/\/rest\/v1\/?$/i, "");
+  url = url.replace(/\/auth\/v1\/?$/i, "");
+  url = url.replace(/\/+$/, "");
+
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith(".supabase.co")) {
+      return undefined;
+    }
+    // Auth client appends /auth/v1/* — any extra path (e.g. /rest/v1) causes
+    // PGRST125 "Invalid path specified in request URL".
+    return `${parsed.protocol}//${parsed.hostname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Safe summary for debugging misconfigured builds (no secrets). */
+export function getSupabaseConfigSummary(): {
+  configured: boolean;
+  rawUrl: string | undefined;
+  normalizedUrl: string | undefined;
+  issue: string | null;
+} {
+  const rawUrl = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const normalizedUrl = normalizeSupabaseUrl(rawUrl);
+  const anonKey = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+  let issue: string | null = null;
+  if (!rawUrl || !anonKey) {
+    issue = "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.";
+  } else if (rawUrl.includes("/rest/v1") || rawUrl.includes("/auth/v1")) {
+    issue =
+      "URL must be the Project URL only (https://xxxx.supabase.co), not /rest/v1 or /auth/v1.";
+  } else if (!normalizedUrl) {
+    issue =
+      "URL must be your Supabase Project URL (https://xxxx.supabase.co), not your app IP or Dashboard link.";
+  } else if (!isSupabaseConfigured()) {
+    issue = "Placeholder values detected — paste real Project URL and anon key.";
+  }
+
+  return {
+    configured: isSupabaseConfigured(),
+    rawUrl,
+    normalizedUrl,
+    issue,
+  };
+}
+
 /** True when real Supabase URL + anon key are present (not empty / placeholder). */
 export function isSupabaseConfigured(): boolean {
-  const url = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const anonKey = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
   if (!url || !anonKey) return false;
@@ -27,7 +86,7 @@ export function isSupabaseConfigured(): boolean {
 }
 
 function getSupabaseConfig() {
-  const url = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const anonKey = normalizeEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
   if (!isSupabaseConfigured() || !url || !anonKey) {

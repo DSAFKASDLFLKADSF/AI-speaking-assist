@@ -34,7 +34,7 @@ from analysis import (
     compute_listen_repeat_score,
 )
 from audio_features import AudioFeatures, analyze_audio_features
-from audio_utils import download_audio
+from audio_utils import download_audio, is_publicly_fetchable_url
 from glm_client import DEFAULT_BASE_URL, DEFAULT_MODEL, GlmApiError, call_glm
 from toefl_rubric import ToeflScorePrompt, get_toefl_score_prompt
 from assembly_transcribe import (
@@ -360,7 +360,7 @@ async def transcribe_audio(
                 len(audio_bytes),
                 bool(audio_url),
             )
-            if audio_url:
+            if audio_url and is_publicly_fetchable_url(audio_url):
                 result = await asyncio.to_thread(
                     assembly_transcribe_url,
                     audio_url,

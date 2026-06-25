@@ -217,11 +217,48 @@ export function buildBatchAnalysisErrorMessage(
   totalCount: number
 ): string | null {
   if (failures.length === 0) return null;
-  const detail = failures
+
+  const seen = new Set<string>();
+  const unique = failures.filter((f) => {
+    const key = `${f.title}\0${f.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const detail = unique
     .map((f) => `${f.title}: ${formatAnalysisError(f.message)}`)
     .join(" ");
   if (scoredCount < totalCount) {
     return `${scoredCount} of ${totalCount} questions scored. ${detail}`;
   }
   return detail;
+}
+
+export function collectUnscoredFailures(
+  partial: {
+    listenRepeat: Array<{
+      pending: ExamRecordingRef;
+      analysis?: unknown;
+      error?: string;
+    }>;
+    interview: Array<{
+      pending: ExamRecordingRef;
+      analysis?: unknown;
+      error?: string;
+    }>;
+  }
+): Array<{ title: string; message: string }> {
+  const failures: Array<{ title: string; message: string }> = [];
+  const seen = new Set<string>();
+
+  for (const row of [...partial.listenRepeat, ...partial.interview]) {
+    if (row.analysis || !row.error) continue;
+    const key = recordingKey(row.pending);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    failures.push({ title: row.pending.title, message: row.error });
+  }
+
+  return failures;
 }

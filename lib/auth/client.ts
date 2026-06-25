@@ -1,0 +1,58 @@
+import type { PublicUser } from "@/lib/auth/types";
+
+export async function fetchCurrentUser(): Promise<PublicUser | null> {
+  try {
+    const res = await fetch("/api/auth/me", { credentials: "include" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { user: PublicUser };
+    return data.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loginWithPassword(
+  email: string,
+  password: string
+): Promise<{ user: PublicUser } | { error: string }> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { error: (data.error as string) ?? "Login failed." };
+  }
+  return { user: data.user as PublicUser };
+}
+
+export async function registerWithPassword(input: {
+  email: string;
+  password: string;
+  displayName?: string;
+}): Promise<{ user: PublicUser } | { error: string }> {
+  const res = await fetch("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    return { error: (data.error as string) ?? "Registration failed." };
+  }
+  return { user: data.user as PublicUser };
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "include",
+  });
+}
+
+export function isAuthClientConfigured(): boolean {
+  return process.env.NEXT_PUBLIC_AUTH_ENABLED !== "false";
+}

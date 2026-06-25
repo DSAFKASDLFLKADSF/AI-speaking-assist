@@ -91,6 +91,7 @@ import {
 import {
 
   buildBatchAnalysisErrorMessage,
+  collectUnscoredFailures,
 
   buildLowMicQualityWarning,
 
@@ -147,6 +148,10 @@ import {
 } from "@/lib/examSessionPersistence";
 
 import { uploadAudioWithMeta } from "@/lib/uploadAudio";
+import {
+  ensureMicrophonePermission,
+  formatMicrophoneError,
+} from "@/lib/microphone";
 import { getInterviewSectionImageUrl } from "@/lib/visualAssets";
 
 
@@ -204,6 +209,8 @@ interface PendingRecording {
   audioUrl: string;
 
   storagePath: string;
+
+  bucket?: string;
 
   durationMs: number;
 
@@ -303,7 +310,9 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const [stopSignal, setStopSignal] = useState(0);
 
-  const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const [micAccessError, setMicAccessError] = useState<string | null>(null);
+
+  const [micEnabling, setMicEnabling] = useState(false);
 
   const [analyzeProgress, setAnalyzeProgress] = useState({
     done: 0,
@@ -374,11 +383,22 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const responseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const responseDeadlineRef = useRef<number | null>(null);
+
   const prepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const processingRef = useRef(false);
 
   const analysisInFlightRef = useRef(false);
+
+  /** Matches `recordingSessionKey` — rejects stale uploads after question change. */
+  const activeRecordingKeyRef = useRef<string | null>(null);
+
+  const recordingArmRef = useRef<string | null>(null);
+
+  const stageRef = useRef(stage);
+
+  stageRef.current = stage;
 
   const sectionBreakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -426,13 +446,31 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       setShowHint(draft.showHint);
 
-      setErrorMessage(draft.errorMessage);
-
       if (draft.results) {
 
         setResults(draft.results as ExamResults);
 
       }
+
+      const restoredResults = draft.results as ExamResults | null;
+
+      const restoredMissing = restoredResults
+
+        ? restoredResults.listenRepeat.filter((r) => !r.analysis).length +
+
+          restoredResults.interview.filter((r) => !r.analysis).length
+
+        : 1;
+
+      setErrorMessage(
+
+        restoredResults?.scored && restoredMissing === 0
+
+          ? null
+
+          : draft.errorMessage
+
+      );
 
       if (draft.partialResults) {
 
@@ -598,7 +636,19 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       showHint,
 
-      errorMessage,
+      errorMessage:
+
+        results?.scored &&
+
+        results.listenRepeat.filter((r) => !r.analysis).length +
+
+          results.interview.filter((r) => !r.analysis).length ===
+
+          0
+
+          ? null
+
+          : errorMessage,
 
       updatedAt: new Date().toISOString(),
 
@@ -724,20 +774,6 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-  const recordingSessionKey =
-
-    stage === "lr_recording"
-
-      ? `lr-${lrIndex}`
-
-      : stage === "iv_recording"
-
-        ? `iv-${ivIndex}`
-
-        : null;
-
-
-
   const runBatchAnalysis = useCallback(
 
     async (
@@ -812,10 +848,6 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-      const failures: Array<{ title: string; message: string }> = [];
-
-
-
       try {
 
         await pipelineRef.current?.waitForIdle();
@@ -864,6 +896,28 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+        for (const row of parallelResults) {
+
+          partialResultsRef.current = applyPipelineOutcome(
+
+            partialResultsRef.current,
+
+            row.pending,
+
+            row.analysis
+
+              ? { status: "done", analysis: row.analysis }
+
+              : { status: "failed", error: row.error ?? "Analysis failed." }
+
+          );
+
+        }
+
+        setPartialResults(partialResultsRef.current);
+
+
+
         const lrResults: ExamResults["listenRepeat"] = [];
 
         const ivResults: ExamResults["interview"] = [];
@@ -871,12 +925,6 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
         for (const row of parallelResults) {
-
-          if (row.error) {
-
-            failures.push({ title: row.pending.title, message: row.error });
-
-          }
 
           if (row.pending.kind === "listen_repeat") {
 
@@ -914,40 +962,6 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-        for (const row of partialResultsRef.current.listenRepeat) {
-
-          if (row.error && !row.analysis) {
-
-            failures.push({
-
-              title: row.pending.title,
-
-              message: row.error,
-
-            });
-
-          }
-
-        }
-
-        for (const row of partialResultsRef.current.interview) {
-
-          if (row.error && !row.analysis) {
-
-            failures.push({
-
-              title: row.pending.title,
-
-              message: row.error,
-
-            });
-
-          }
-
-        }
-
-
-
         const merged = mergeExamAnalysisResults(
           allRecordings,
           lrResults,
@@ -961,19 +975,27 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
           merged.interview.filter((row) => row.analysis).length;
 
-        setErrorMessage(
+        if (scoredCount >= allRecordings.length) {
 
-          buildBatchAnalysisErrorMessage(
+          setErrorMessage(null);
 
-            failures,
+        } else {
 
-            scoredCount,
+          setErrorMessage(
 
-            allRecordings.length
+            buildBatchAnalysisErrorMessage(
 
-          )
+              collectUnscoredFailures(partialResultsRef.current),
 
-        );
+              scoredCount,
+
+              allRecordings.length
+
+            )
+
+          );
+
+        }
 
         finishWithResults(merged.listenRepeat, merged.interview, true);
 
@@ -1201,11 +1223,23 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       const captureIv = currentIvQuestion;
 
+      const captureKey =
+
+        captureStage === "lr_recording"
+
+          ? `lr-${lrIndex}`
+
+          : captureStage === "iv_recording"
+
+            ? `iv-${ivIndex}`
+
+            : null;
+
 
 
       try {
 
-        const { audioUrl: storedUrl, storagePath } = await uploadAudioWithMeta(
+        const { audioUrl: storedUrl, storagePath, bucket } = await uploadAudioWithMeta(
 
           result.blob,
 
@@ -1222,6 +1256,30 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
         URL.revokeObjectURL(result.url);
+
+
+
+        const stillOnQuestion =
+
+          captureKey != null &&
+
+          captureKey === activeRecordingKeyRef.current &&
+
+          stageRef.current === captureStage &&
+
+          (captureStage === "lr_recording"
+
+            ? currentLrPrompt?.id === captureLr?.id
+
+            : currentIvQuestion?.id === captureIv?.id);
+
+
+
+        if (!stillOnQuestion) {
+
+          return;
+
+        }
 
 
 
@@ -1244,6 +1302,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
             audioUrl: storedUrl,
 
             storagePath,
+
+            bucket,
 
             durationMs: result.durationMs,
 
@@ -1292,6 +1352,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
             audioUrl: storedUrl,
 
             storagePath,
+
+            bucket,
 
             durationMs: result.durationMs,
 
@@ -1351,24 +1413,27 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     },
 
-    [stage, currentLrPrompt, currentIvQuestion, testId, clearResponseTimer]
+    [stage, currentLrPrompt, currentIvQuestion, testId, lrIndex, ivIndex, clearResponseTimer]
 
   );
 
 
 
-  const retryCurrentRecording = useCallback(() => {
-
-    setRecordingError(null);
-
-    setErrorMessage(null);
-
-    setRecordingStatus("idle");
-
+  const handleRecordingStart = useCallback(() => {
+    responseDeadlineRef.current =
+      Date.now() + activeResponseSeconds * 1000;
     setResponseTimeLeft(activeResponseSeconds);
+  }, [activeResponseSeconds]);
 
+
+
+  const retryCurrentRecording = useCallback(() => {
+    setRecordingError(null);
+    setErrorMessage(null);
+    recordingArmRef.current = null;
+    setResponseTimeLeft(activeResponseSeconds);
+    responseDeadlineRef.current = null;
     setStartSignal((n) => n + 1);
-
   }, [activeResponseSeconds]);
 
 
@@ -1491,17 +1556,35 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+  useEffect(() => {
+
+    if (stage !== "results" || !results?.scored) return;
+
+    if (missingAnalysisCount === 0) {
+
+      setErrorMessage(null);
+
+    }
+
+  }, [stage, results, missingAnalysisCount]);
+
+
+
+  const scoringIncomplete =
+
+    missingAnalysisCount > 0 && Boolean(errorMessage);
+
+
+
   const showRescoreButton =
 
     stage === "results" &&
 
     recordings.length > 0 &&
 
-    (Boolean(errorMessage) ||
+    (missingAnalysisCount > 0 ||
 
-      !results?.scored ||
-
-      missingAnalysisCount > 0);
+      !results?.scored);
 
 
 
@@ -1509,7 +1592,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     ? "Score recordings"
 
-    : errorMessage || missingAnalysisCount > 0
+    : missingAnalysisCount > 0
 
       ? "Retry scoring"
 
@@ -1581,9 +1664,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     if (!isRecordingStage) {
 
-      setRecordingStatus("idle");
+      activeRecordingKeyRef.current = null;
 
-      setMicStream(null);
+      recordingArmRef.current = null;
+
+      setRecordingStatus("idle");
 
       return;
 
@@ -1591,11 +1676,33 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+    const armKey =
+
+      stage === "lr_recording" ? `lr-${lrIndex}` : `iv-${ivIndex}`;
+
+
+
+    activeRecordingKeyRef.current = armKey;
+
+    responseDeadlineRef.current = null;
+
+
+
+    if (recordingArmRef.current === armKey) {
+
+      return;
+
+    }
+
+    recordingArmRef.current = armKey;
+
+    setRecordingError(null);
+
     setResponseTimeLeft(activeResponseSeconds);
 
     setStartSignal((n) => n + 1);
 
-  }, [isRecordingStage, lrIndex, ivIndex, activeResponseSeconds]);
+  }, [isRecordingStage, stage, lrIndex, ivIndex, activeResponseSeconds]);
 
 
 
@@ -1611,31 +1718,35 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-    responseTimerRef.current = setInterval(() => {
+    const tick = () => {
 
-      setResponseTimeLeft((prev) => {
+      const deadline = responseDeadlineRef.current;
 
-        if (prev <= 1) {
+      if (!deadline) return;
 
-          clearInterval(responseTimerRef.current!);
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
 
-          responseTimerRef.current = null;
+      setResponseTimeLeft(left);
 
-          if (recordingStatusRef.current === "recording") {
+      if (left <= 0) {
 
-            setStopSignal((n) => n + 1);
+        clearResponseTimer();
 
-          }
+        if (recordingStatusRef.current === "recording") {
 
-          return 0;
+          setStopSignal((n) => n + 1);
 
         }
 
-        return prev - 1;
+      }
 
-      });
+    };
 
-    }, 1000);
+
+
+    tick();
+
+    responseTimerRef.current = setInterval(tick, 250);
 
 
 
@@ -1715,7 +1826,31 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-  const startExam = () => {
+  const startExam = async () => {
+
+    setMicAccessError(null);
+
+    setMicEnabling(true);
+
+    try {
+
+      await ensureMicrophonePermission({ examMode: true });
+
+    } catch (err) {
+
+      const msg = formatMicrophoneError(err);
+
+      setMicAccessError(msg);
+
+      setErrorMessage(msg);
+
+      return;
+
+    } finally {
+
+      setMicEnabling(false);
+
+    }
 
     clearExamDraft(testId, mode);
 
@@ -1753,7 +1888,23 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-  const onLrInstructionContinue = () => setStage("lr_listen");
+  const onLrInstructionContinue = async () => {
+
+    try {
+
+      await ensureMicrophonePermission({ examMode: true });
+
+    } catch (err) {
+
+      setMicAccessError(formatMicrophoneError(err));
+
+      return;
+
+    }
+
+    setStage("lr_listen");
+
+  };
 
 
 
@@ -1767,7 +1918,23 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-  const onIvInstructionContinue = () => setStage("iv_intro");
+  const onIvInstructionContinue = async () => {
+
+    try {
+
+      await ensureMicrophonePermission({ examMode: true });
+
+    } catch (err) {
+
+      setMicAccessError(formatMicrophoneError(err));
+
+      return;
+
+    }
+
+    setStage("iv_intro");
+
+  };
 
 
 
@@ -1828,6 +1995,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
           stageLabel={stageLabel}
 
           exitHref={`/test/${testId}`}
+
+          onExit={() => clearExamDraft(testId, mode)}
 
         />
 
@@ -2103,17 +2272,37 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
+            <p className="mt-3 text-xs text-slate-500">
+
+              When you click Start, your browser will ask for microphone access.
+
+              Allow it so recording can begin after each prompt.
+
+            </p>
+
+            {micAccessError && (
+
+              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+
+                {micAccessError}
+
+              </p>
+
+            )}
+
             <button
 
               type="button"
 
-              onClick={startExam}
+              onClick={() => void startExam()}
 
-              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white hover:bg-[#152a45]"
+              disabled={micEnabling}
+
+              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white hover:bg-[#152a45] disabled:opacity-50"
 
             >
 
-              Start when ready
+              {micEnabling ? "Requesting microphone…" : "Start when ready"}
 
             </button>
 
@@ -2151,7 +2340,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
               type="button"
 
-              onClick={onLrInstructionContinue}
+              onClick={() => void onLrInstructionContinue()}
 
               className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white"
 
@@ -2160,6 +2349,16 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
               Start when ready
 
             </button>
+
+            {micAccessError && (
+
+              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+
+                {micAccessError}
+
+              </p>
+
+            )}
 
           </section>
 
@@ -2335,7 +2534,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
               type="button"
 
-              onClick={onIvInstructionContinue}
+              onClick={() => void onIvInstructionContinue()}
 
               className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white"
 
@@ -2344,6 +2543,16 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
               Continue
 
             </button>
+
+            {micAccessError && (
+
+              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+
+                {micAccessError}
+
+              </p>
+
+            )}
 
           </section>
 
@@ -2603,11 +2812,9 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-        {isRecordingStage && recordingSessionKey && (
+        {isRecordingStage && (
 
           <RecordButton
-
-            key={recordingSessionKey}
 
             hideControls
 
@@ -2617,15 +2824,13 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             onStatusChange={setRecordingStatus}
 
-            onStreamReady={setMicStream}
+            onRecordingStart={handleRecordingStart}
 
             onRecordingComplete={handleRecordingComplete}
 
             onError={(err) => {
 
               setRecordingError(err.message);
-
-              setErrorMessage(err.message);
 
             }}
 
@@ -2663,7 +2868,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             recordingStatus={recordingStatus}
 
-            micStream={micStream}
+            micStream={null}
 
           />
 
@@ -2871,7 +3076,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-            {showRescoreButton && (errorMessage || missingAnalysisCount > 0) && (
+            {showRescoreButton && scoringIncomplete && (
 
               <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
 
@@ -3105,7 +3310,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-        {errorMessage && (
+        {errorMessage && missingAnalysisCount > 0 && (
 
           <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
 

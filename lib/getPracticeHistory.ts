@@ -1,4 +1,4 @@
-import type { TypedSupabaseClient } from "@/lib/supabase";
+import { query } from "@/lib/db";
 import type {
   PracticeHistoryAudio,
   PracticeHistoryItem,
@@ -11,53 +11,66 @@ import { mapPracticeSessionRow } from "@/lib/practiceSessionMapper";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (!value) return null;
-  return Array.isArray(value) ? (value[0] ?? null) : value;
+interface HistoryRow extends Record<string, unknown> {
+  ar_id: string | null;
+  ar_transcript: string | null;
+  ar_duration_seconds: string | number | null;
+  ar_audio_url: string | null;
+  ar_storage_path: string | null;
+  ar_created_at: string | Date | null;
+  sc_id: string | null;
+  sc_scaled_score: number | null;
+  sc_delivery_score: string | number | null;
+  sc_language_use_score: string | number | null;
+  sc_topic_development_score: string | number | null;
+  sc_raw_total_score: string | number | null;
+  sc_overall_feedback: string | null;
+  sc_ai_model: string | null;
+  sc_created_at: string | Date | null;
 }
 
-function mapAudio(row: Record<string, unknown>): PracticeHistoryAudio {
+function mapAudioFromRow(row: HistoryRow): PracticeHistoryAudio | null {
+  if (!row.ar_id) return null;
   return {
-    id: String(row.id),
-    transcript: (row.transcript as string | null) ?? null,
-    durationSeconds: Number(row.duration_seconds),
-    audioUrl: (row.audio_url as string | null) ?? null,
-    storagePath: String(row.storage_path),
-    createdAt: String(row.created_at),
+    id: row.ar_id,
+    transcript: row.ar_transcript ?? null,
+    durationSeconds: Number(row.ar_duration_seconds),
+    audioUrl: row.ar_audio_url ?? null,
+    storagePath: String(row.ar_storage_path),
+    createdAt:
+      row.ar_created_at instanceof Date
+        ? row.ar_created_at.toISOString()
+        : String(row.ar_created_at),
   };
 }
 
-function mapScore(row: Record<string, unknown>): PracticeHistoryScore {
+function mapScoreFromRow(row: HistoryRow): PracticeHistoryScore | null {
+  if (!row.sc_id) return null;
   return {
-    id: String(row.id),
-    scaledScore: Number(row.scaled_score),
-    deliveryScore: Number(row.delivery_score),
-    languageUseScore: Number(row.language_use_score),
-    topicDevelopmentScore: Number(row.topic_development_score),
+    id: row.sc_id,
+    scaledScore: Number(row.sc_scaled_score),
+    deliveryScore: Number(row.sc_delivery_score),
+    languageUseScore: Number(row.sc_language_use_score),
+    topicDevelopmentScore: Number(row.sc_topic_development_score),
     rawTotalScore:
-      row.raw_total_score !== undefined && row.raw_total_score !== null
-        ? Number(row.raw_total_score)
+      row.sc_raw_total_score !== undefined && row.sc_raw_total_score !== null
+        ? Number(row.sc_raw_total_score)
         : null,
-    overallFeedback: (row.overall_feedback as string | null) ?? null,
-    aiModel: String(row.ai_model),
-    createdAt: String(row.created_at),
+    overallFeedback: row.sc_overall_feedback ?? null,
+    aiModel: String(row.sc_ai_model),
+    createdAt:
+      row.sc_created_at instanceof Date
+        ? row.sc_created_at.toISOString()
+        : String(row.sc_created_at),
   };
 }
 
-function mapHistoryRow(row: Record<string, unknown>): PracticeHistoryItem {
-  const audioRow = firstRelation(
-    row.audio_responses as Record<string, unknown> | Record<string, unknown>[]
-  );
-  const scoreRow = firstRelation(
-    row.scores as Record<string, unknown> | Record<string, unknown>[]
-  );
-
+function mapHistoryRow(row: HistoryRow): PracticeHistoryItem {
   const session = mapPracticeSessionRow(row);
-
   return {
     session,
-    audio: audioRow ? mapAudio(audioRow) : null,
-    score: scoreRow ? mapScore(scoreRow) : null,
+    audio: mapAudioFromRow(row),
+    score: mapScoreFromRow(row),
   };
 }
 
@@ -80,63 +93,68 @@ export function normalizeHistoryQuery(
 }
 
 export async function getPracticeHistory(
-  supabase: TypedSupabaseClient,
   userId: string,
-  query: PracticeHistoryQuery = {}
+  queryInput: PracticeHistoryQuery = {}
 ): Promise<PracticeHistoryResponse> {
-  const { limit, offset, status, taskNumber } = normalizeHistoryQuery(query);
+  const { limit, offset, status, taskNumber } =
+    normalizeHistoryQuery(queryInput);
 
-  let builder = supabase
-    .from("practice_sessions")
-    .select(
-      `
-        *,
-        audio_responses (
-          id,
-          transcript,
-          duration_seconds,
-          audio_url,
-          storage_path,
-          created_at
-        ),
-        scores (
-          id,
-          scaled_score,
-          delivery_score,
-          language_use_score,
-          topic_development_score,
-          raw_total_score,
-          overall_feedback,
-          ai_model,
-          created_at
-        )
-      `,
-      { count: "exact" }
-    )
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
+  const conditions = ["ps.user_id = $1"];
+  const params: unknown[] = [userId];
 
   if (status) {
-    builder = builder.eq("status", status);
+    params.push(status);
+    conditions.push(`ps.status = $${params.length}`);
   }
   if (taskNumber) {
-    builder = builder.eq("task_number", taskNumber);
+    params.push(taskNumber);
+    conditions.push(`ps.task_number = $${params.length}`);
   }
 
-  const { data, error, count } = await builder;
+  const whereClause = conditions.join(" AND ");
 
-  if (error) {
-    throw new Error(`Failed to load practice history: ${error.message}`);
-  }
-
-  const items = (data ?? []).map((row) =>
-    mapHistoryRow(row as Record<string, unknown>)
+  const countRows = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM practice_sessions ps WHERE ${whereClause}`,
+    params
   );
+  const total = Number(countRows[0]?.count ?? 0);
+
+  params.push(limit, offset);
+  const limitParam = params.length - 1;
+  const offsetParam = params.length;
+
+  const rows = await query<HistoryRow>(
+    `SELECT
+      ps.*,
+      ar.id AS ar_id,
+      ar.transcript AS ar_transcript,
+      ar.duration_seconds AS ar_duration_seconds,
+      ar.audio_url AS ar_audio_url,
+      ar.storage_path AS ar_storage_path,
+      ar.created_at AS ar_created_at,
+      sc.id AS sc_id,
+      sc.scaled_score AS sc_scaled_score,
+      sc.delivery_score AS sc_delivery_score,
+      sc.language_use_score AS sc_language_use_score,
+      sc.topic_development_score AS sc_topic_development_score,
+      sc.raw_total_score AS sc_raw_total_score,
+      sc.overall_feedback AS sc_overall_feedback,
+      sc.ai_model AS sc_ai_model,
+      sc.created_at AS sc_created_at
+    FROM practice_sessions ps
+    LEFT JOIN audio_responses ar ON ar.session_id = ps.id
+    LEFT JOIN scores sc ON sc.session_id = ps.id
+    WHERE ${whereClause}
+    ORDER BY ps.created_at DESC
+    LIMIT $${limitParam} OFFSET $${offsetParam}`,
+    params
+  );
+
+  const items = rows.map(mapHistoryRow);
 
   return {
     items,
-    total: count ?? items.length,
+    total,
     limit,
     offset,
   };

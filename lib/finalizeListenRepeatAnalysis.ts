@@ -3,7 +3,7 @@ import type { ListenRepeatScore } from "@/components/ScoreCard";
 import type { AnalyzeSpeechRequest, AnalyzeSpeechResponse } from "@/lib/analyze-speech-types";
 import type { PythonAnalyzeSpeechResponse } from "@/lib/pythonSpeechApi";
 import { saveListenRepeatAnalysis } from "@/lib/saveListenRepeatAnalysis";
-import type { TypedSupabaseClient } from "@/lib/supabase";
+import { isDatabaseConfigured } from "@/lib/db";
 import {
   buildScoreSummary,
   buildWordComparison,
@@ -64,7 +64,7 @@ function buildFallbackFeedback(
 export async function finalizeListenRepeatAnalysis(
   body: AnalyzeSpeechRequest,
   pythonResult: PythonAnalyzeSpeechResponse,
-  supabase: TypedSupabaseClient | null
+  userId?: string | null
 ): Promise<AnalyzeSpeechResponse> {
   const { audioUrl, original, storagePath, promptId } = body;
 
@@ -97,37 +97,31 @@ export async function finalizeListenRepeatAnalysis(
   let scoreId: string | undefined;
   let persistError: string | undefined;
 
-  if (supabase) {
+  if (userId && isDatabaseConfigured()) {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const saved = await saveListenRepeatAnalysis({
+        userId,
+        audioUrl,
+        storagePath,
+        original,
+        promptId,
+        transcript,
+        score,
+        scoreSummary,
+        feedback,
+        durationSeconds,
+        mimeType: pythonResult.mime_type,
+        fileSizeBytes: pythonResult.file_size_bytes,
+        aiModel: pythonResult.model ?? "python-api",
+        deliveryScore: pythonResult.delivery_score,
+        languageUseScore: pythonResult.language_use_score,
+        topicDevelopmentScore: pythonResult.topic_development_score,
+      });
 
-      if (user) {
-        const saved = await saveListenRepeatAnalysis(supabase, {
-          userId: user.id,
-          audioUrl,
-          storagePath,
-          original,
-          promptId,
-          transcript,
-          score,
-          scoreSummary,
-          feedback,
-          durationSeconds,
-          mimeType: pythonResult.mime_type,
-          fileSizeBytes: pythonResult.file_size_bytes,
-          aiModel: pythonResult.model ?? "python-api",
-          deliveryScore: pythonResult.delivery_score,
-          languageUseScore: pythonResult.language_use_score,
-          topicDevelopmentScore: pythonResult.topic_development_score,
-        });
-
-        persisted = true;
-        sessionId = saved.sessionId;
-        audioResponseId = saved.audioResponseId;
-        scoreId = saved.scoreId;
-      }
+      persisted = true;
+      sessionId = saved.sessionId;
+      audioResponseId = saved.audioResponseId;
+      scoreId = saved.scoreId;
     } catch (err) {
       persistError =
         err instanceof Error ? err.message : "Failed to save analysis.";

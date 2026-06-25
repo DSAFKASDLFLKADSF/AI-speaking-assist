@@ -1,12 +1,12 @@
 import type { AnalyzeInterviewRequest, AnalyzeInterviewResponse } from "@/lib/analyze-interview-types";
 import type { PythonAnalyzeInterviewResponse } from "@/lib/pythonSpeechApi";
 import { saveInterviewAnalysis } from "@/lib/saveInterviewAnalysis";
-import type { TypedSupabaseClient } from "@/lib/supabase";
+import { isDatabaseConfigured } from "@/lib/db";
 
 export async function finalizeInterviewAnalysis(
   body: AnalyzeInterviewRequest,
   pythonResult: PythonAnalyzeInterviewResponse,
-  supabase: TypedSupabaseClient | null
+  userId?: string | null
 ): Promise<AnalyzeInterviewResponse> {
   const {
     audioUrl,
@@ -21,34 +21,28 @@ export async function finalizeInterviewAnalysis(
   let sessionId: string | undefined;
   let persistError: string | undefined;
 
-  if (supabase) {
+  if (userId && isDatabaseConfigured()) {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        const saved = await saveInterviewAnalysis(supabase, {
-          userId: user.id,
-          audioUrl,
-          storagePath,
-          question: prompt,
-          questionId,
-          transcript: pythonResult.transcript,
-          scores: pythonResult.scores,
-          scoreSummary: pythonResult.score_summary,
-          feedback: pythonResult.feedback,
-          metrics: pythonResult.metrics,
-          durationSeconds:
-            (durationMs ?? 0) > 0
-              ? durationMs! / 1000
-              : pythonResult.metrics.longest_pause_seconds || 1,
-          responseSeconds: responseSeconds ?? 45,
-          aiModel: pythonResult.model ?? "python-api",
-        });
-        persisted = true;
-        sessionId = saved.sessionId;
-      }
+      const saved = await saveInterviewAnalysis({
+        userId,
+        audioUrl,
+        storagePath,
+        question: prompt,
+        questionId,
+        transcript: pythonResult.transcript,
+        scores: pythonResult.scores,
+        scoreSummary: pythonResult.score_summary,
+        feedback: pythonResult.feedback,
+        metrics: pythonResult.metrics,
+        durationSeconds:
+          (durationMs ?? 0) > 0
+            ? durationMs! / 1000
+            : pythonResult.metrics.longest_pause_seconds || 1,
+        responseSeconds: responseSeconds ?? 45,
+        aiModel: pythonResult.model ?? "python-api",
+      });
+      persisted = true;
+      sessionId = saved.sessionId;
     } catch (err) {
       persistError =
         err instanceof Error ? err.message : "Failed to save interview analysis.";

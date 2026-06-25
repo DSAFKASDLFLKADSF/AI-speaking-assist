@@ -8,7 +8,7 @@ import {
 import { formatAnalysisError, recordingKey } from "@/lib/examRecordings";
 import { refreshSignedAudioUrl } from "@/lib/uploadAudio";
 
-export const PIPELINE_MAX_CONCURRENT = 2;
+export const PIPELINE_MAX_CONCURRENT = 1;
 
 export interface ExamRecordingForAnalysis {
   kind: "listen_repeat" | "interview";
@@ -19,6 +19,7 @@ export interface ExamRecordingForAnalysis {
   original?: string;
   audioUrl: string;
   storagePath: string;
+  bucket?: string;
   responseSeconds: number;
   durationMs: number;
 }
@@ -154,7 +155,10 @@ export function countPipelineInFlight(
 
 async function resolveAudioUrl(recording: ExamRecordingForAnalysis): Promise<string> {
   try {
-    return await refreshSignedAudioUrl(recording.storagePath);
+    return await refreshSignedAudioUrl(
+      recording.storagePath,
+      recording.bucket
+    );
   } catch {
     return recording.audioUrl;
   }

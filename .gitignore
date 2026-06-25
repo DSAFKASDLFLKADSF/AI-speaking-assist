@@ -32,6 +32,9 @@ __pycache__/
 *.py[cod]
 python/cache/
 
+# local audio uploads
+/uploads/
+
 # editor
 .vscode/
 

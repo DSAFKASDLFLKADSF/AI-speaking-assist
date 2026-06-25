@@ -1,4 +1,11 @@
-import { getSupabase } from "@/lib/supabase";
+import { fetchCurrentUser } from "@/lib/auth/client";
+import {
+  LOCAL_AUDIO_BUCKET,
+  buildAudioStoragePath,
+  normalizeAudioContentType,
+  resolvePublicAudioUrl,
+} from "@/lib/audioStorage";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
 
 export const AUDIO_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_AUDIO_BUCKET ?? "audio-responses";
@@ -22,106 +29,95 @@ export interface UploadAudioResult {
   bucket: string;
 }
 
-const MIME_EXTENSION: Record<string, string> = {
-  "audio/webm": "webm",
-  "audio/webm;codecs=opus": "webm",
-  "audio/wav": "wav",
-  "audio/x-wav": "wav",
-  "audio/mpeg": "mp3",
-  "audio/mp4": "m4a",
-  "audio/ogg": "ogg",
-  "audio/ogg;codecs=opus": "ogg",
-};
-
-/** Supabase bucket allowed_mime_types use base types without codec suffix. */
-function normalizeContentType(mimeType: string): string {
-  const base = mimeType.split(";")[0]?.trim().toLowerCase();
-  if (!base) return "audio/webm";
-  if (base.startsWith("audio/")) return base;
-  return "audio/webm";
-}
-
-function extensionFromMime(mimeType: string): string {
-  return MIME_EXTENSION[mimeType] ?? "webm";
-}
-
-function buildStoragePath(
-  userId: string,
-  sessionId: string | undefined,
-  fileName: string | undefined,
-  mimeType: string
-): string {
-  if (fileName) {
-    return `${userId}/${fileName}`;
-  }
-
-  const ext = extensionFromMime(mimeType);
-  const id = crypto.randomUUID();
-  const timestamp = Date.now();
-
-  if (sessionId) {
-    return `${userId}/${sessionId}/${timestamp}-${id}.${ext}`;
-  }
-
-  return `${userId}/${timestamp}-${id}.${ext}`;
-}
-
 async function resolveUserId(
   explicitUserId?: string,
   allowAnonymous?: boolean
 ): Promise<string> {
   if (explicitUserId) return explicitUserId;
 
-  const supabase = getSupabase();
-  // getSession() returns null when logged out; getUser() errors with "Auth session missing!"
-  const {
-    data: { session },
-    error,
-  } = await supabase.auth.getSession();
+  const user = await fetchCurrentUser();
+  if (user) return user.id;
 
-  if (error) {
-    throw new Error(`Failed to get user: ${error.message}`);
-  }
-
-  const user = session?.user;
-  if (!user) {
-    if (allowAnonymous) return "anonymous";
-    throw new Error("User must be logged in to upload audio.");
-  }
-
-  return user.id;
+  if (allowAnonymous) return "anonymous";
+  throw new Error("User must be logged in to upload audio.");
 }
 
-/**
- * Upload a recorded audio blob to Supabase Storage.
- * @returns Public or signed URL for playback (`audioUrl`) and the storage path.
- */
-export async function uploadAudio(
-  blob: Blob,
-  options: UploadAudioOptions = {}
-): Promise<string> {
-  const result = await uploadAudioWithMeta(blob, options);
-  return result.audioUrl;
+function preferLocalAudioStorage(): boolean {
+  if (process.env.NEXT_PUBLIC_AUDIO_STORAGE === "local") return true;
+  if (process.env.NEXT_PUBLIC_AUDIO_STORAGE === "supabase") return false;
+  return process.env.NODE_ENV === "development" || !isSupabaseConfigured();
 }
 
-/**
- * Upload a recorded audio blob and return full upload metadata.
- */
-export async function uploadAudioWithMeta(
+function isNetworkUploadError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /fetch failed|failed to fetch|network error|ECONNREFUSED|ENOTFOUND/i.test(
+    message
+  );
+}
+
+async function uploadAudioLocal(
   blob: Blob,
-  options: UploadAudioOptions = {}
+  options: UploadAudioOptions
 ): Promise<UploadAudioResult> {
-  if (!blob.size) {
-    throw new Error(
-      "Recording is empty. Check your microphone and try again."
-    );
+  const userId = await resolveUserId(options.userId, options.allowAnonymous);
+  const contentType = normalizeAudioContentType(blob.type || "audio/webm");
+  const storagePath = buildAudioStoragePath(
+    userId,
+    options.sessionId,
+    options.fileName,
+    contentType
+  );
+
+  const formData = new FormData();
+  formData.append("file", blob, options.fileName ?? "recording.webm");
+  formData.append("userId", userId);
+  if (options.sessionId) formData.append("sessionId", options.sessionId);
+  if (options.fileName) formData.append("fileName", options.fileName);
+  if (options.allowAnonymous) formData.append("allowAnonymous", "true");
+
+  const response = await fetch("/api/audio/upload", {
+    method: "POST",
+    body: formData,
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    audioUrl?: string;
+    storagePath?: string;
+    bucket?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${payload.error ?? response.statusText}`);
   }
 
+  if (!payload.audioUrl || !payload.storagePath) {
+    throw new Error("Upload failed: invalid server response.");
+  }
+
+  const audioUrl =
+    typeof window !== "undefined"
+      ? payload.audioUrl.startsWith("http")
+        ? payload.audioUrl
+        : `${window.location.origin}${payload.audioUrl}`
+      : payload.audioUrl;
+
+  return {
+    audioUrl,
+    storagePath: payload.storagePath,
+    bucket: payload.bucket ?? LOCAL_AUDIO_BUCKET,
+  };
+}
+
+async function uploadAudioSupabase(
+  blob: Blob,
+  options: UploadAudioOptions
+): Promise<UploadAudioResult> {
   const bucket = options.bucket ?? AUDIO_BUCKET;
   const useSignedUrl = options.signed ?? true;
-  const contentType = normalizeContentType(blob.type || "audio/webm");
+  const contentType = normalizeAudioContentType(blob.type || "audio/webm");
   const userId = await resolveUserId(options.userId, options.allowAnonymous);
-  const storagePath = buildStoragePath(
+  const storagePath = buildAudioStoragePath(
     userId,
     options.sessionId,
     options.fileName,
@@ -170,20 +166,68 @@ export async function uploadAudioWithMeta(
   return { audioUrl, storagePath, bucket };
 }
 
+/**
+ * Upload a recorded audio blob to Supabase Storage.
+ * @returns Public or signed URL for playback (`audioUrl`) and the storage path.
+ */
+export async function uploadAudio(
+  blob: Blob,
+  options: UploadAudioOptions = {}
+): Promise<string> {
+  const result = await uploadAudioWithMeta(blob, options);
+  return result.audioUrl;
+}
+
+/**
+ * Upload a recorded audio blob and return full upload metadata.
+ */
+export async function uploadAudioWithMeta(
+  blob: Blob,
+  options: UploadAudioOptions = {}
+): Promise<UploadAudioResult> {
+  if (!blob.size) {
+    throw new Error(
+      "Recording is empty. Check your microphone and try again."
+    );
+  }
+
+  if (preferLocalAudioStorage() || !isSupabaseConfigured()) {
+    return uploadAudioLocal(blob, options);
+  }
+
+  try {
+    return await uploadAudioSupabase(blob, options);
+  } catch (err) {
+    if (isNetworkUploadError(err)) {
+      return uploadAudioLocal(blob, options);
+    }
+    throw err;
+  }
+}
+
 /** Refresh a signed playback URL before sending audio to the Python API. */
 export async function refreshSignedAudioUrl(
   storagePath: string,
   bucket: string = AUDIO_BUCKET
 ): Promise<string> {
+  if (bucket === LOCAL_AUDIO_BUCKET || preferLocalAudioStorage()) {
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}/api/audio/file?path=${encodeURIComponent(storagePath)}`;
+    }
+    return resolvePublicAudioUrl(storagePath);
+  }
+
+  if (!isSupabaseConfigured()) {
+    return resolvePublicAudioUrl(storagePath);
+  }
+
   const supabase = getSupabase();
   const { data, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
 
   if (error || !data?.signedUrl) {
-    throw new Error(
-      `Failed to refresh audio URL: ${error?.message ?? "Unknown error"}`
-    );
+    return resolvePublicAudioUrl(storagePath);
   }
 
   return data.signedUrl;

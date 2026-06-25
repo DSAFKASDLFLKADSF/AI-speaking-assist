@@ -2,11 +2,12 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { TypedSupabaseClient } from "@/lib/supabase";
+import { normalizeSupabaseUrl } from "@/lib/supabase";
 import type { Database } from "@/lib/database.types";
 
 export async function createSupabaseServerClient(): Promise<TypedSupabaseClient> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
   if (!url || !anonKey) {
     throw new Error(
@@ -45,7 +46,7 @@ export async function createSupabaseServerClientSafe(): Promise<TypedSupabaseCli
 
 /** Service-role client for trusted server writes (optional). */
 export function createSupabaseServiceClient(): TypedSupabaseClient | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
   if (!url || !serviceKey) return null;

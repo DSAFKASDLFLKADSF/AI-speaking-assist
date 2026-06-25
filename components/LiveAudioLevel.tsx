@@ -25,10 +25,18 @@ export function LiveAudioLevel({
       return;
     }
 
+    // Clone so level metering does not compete with MediaRecorder on the live track.
+    let meterStream: MediaStream | null = null;
+    try {
+      meterStream = stream.clone();
+    } catch {
+      meterStream = stream;
+    }
+
     const ctx = new AudioContext();
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 256;
-    const source = ctx.createMediaStreamSource(stream);
+    const source = ctx.createMediaStreamSource(meterStream);
     source.connect(analyser);
     const data = new Uint8Array(analyser.frequencyBinCount);
     let rafId = 0;
@@ -53,6 +61,9 @@ export function LiveAudioLevel({
       cancelAnimationFrame(rafId);
       source.disconnect();
       void ctx.close();
+      if (meterStream && meterStream !== stream) {
+        meterStream.getTracks().forEach((track) => track.stop());
+      }
     };
   }, [active, stream]);
 

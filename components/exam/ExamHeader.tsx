@@ -10,6 +10,8 @@ export interface ExamHeaderProps {
   progress: ExamProgressInfo;
   stageLabel: ExamStageLabel | null;
   exitHref: string;
+  /** Called when the user leaves the exam (e.g. clear saved draft). */
+  onExit?: () => void;
   sticky?: boolean;
 }
 
@@ -18,6 +20,7 @@ export function ExamHeader({
   progress,
   stageLabel,
   exitHref,
+  onExit,
   sticky = true,
 }: ExamHeaderProps) {
   return (
@@ -42,6 +45,7 @@ export function ExamHeader({
           {stageLabel && <StageBadge label={stageLabel} />}
           <Link
             href={exitHref}
+            onClick={() => onExit?.()}
             className="text-xs font-medium text-slate-500 hover:text-slate-800"
           >
             Exit test

@@ -3,33 +3,19 @@
 
 
 import Link from "next/link";
-
 import { useCallback, useEffect, useState } from "react";
-
-import type { User } from "@supabase/supabase-js";
-
 import {
-
   DimensionProgressList,
-
   GrowthHero,
-
   GrowthStatCard,
-
   InsightPanel,
-
   PracticeMixChart,
-
   WeeklyTrendChart,
-
 } from "@/components/growth/GrowthVisuals";
-
 import { getPracticeHistory } from "@/lib/api";
-
+import { fetchCurrentUser } from "@/lib/auth/client";
+import type { PublicUser } from "@/lib/auth/types";
 import { computeGrowthSummary, type GrowthSummary } from "@/lib/growthStats";
-
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
-
 import {
   formatSpeakingBand,
   SPEAKING_BAND_MAX,
@@ -43,7 +29,7 @@ export default function GrowthPage() {
 
   const [loading, setLoading] = useState(true);
 
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
 
 
 
@@ -61,36 +47,16 @@ export default function GrowthPage() {
 
 
 
-    if (isSupabaseConfigured()) {
+    const currentUser = await fetchCurrentUser();
+    setUser(currentUser);
 
-      const supabase = getSupabase();
-
-      const {
-
-        data: { session },
-
-      } = await supabase.auth.getSession();
-
-      setUser(session?.user ?? null);
-
-
-
-      if (session?.user) {
-
-        try {
-
-          const data = await getPracticeHistory({ limit: 100 });
-
-          cloudItems = data.items;
-
-        } catch {
-
-          // Local-only growth still works
-
-        }
-
+    if (currentUser) {
+      try {
+        const data = await getPracticeHistory({ limit: 100 });
+        cloudItems = data.items;
+      } catch {
+        // Local-only growth still works
       }
-
     }
 
 

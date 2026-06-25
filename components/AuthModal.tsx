@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useId, useState } from "react";
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
+import {
+  fetchCurrentUser,
+  isAuthClientConfigured,
+  loginWithPassword,
+  registerWithPassword,
+} from "@/lib/auth/client";
 
 export type AuthMode = "login" | "register";
 
@@ -14,17 +19,20 @@ export interface AuthModalProps {
 
 function friendlyAuthError(message: string): string {
   const lower = message.toLowerCase();
-  if (lower.includes("invalid login credentials")) {
+  if (lower.includes("incorrect email or password")) {
     return "Incorrect email or password.";
   }
-  if (lower.includes("user already registered")) {
+  if (lower.includes("already exists")) {
     return "An account with this email already exists. Try logging in.";
   }
-  if (lower.includes("password should be at least")) {
+  if (lower.includes("password must be at least")) {
     return "Password must be at least 6 characters.";
   }
-  if (lower.includes("unable to validate email")) {
+  if (lower.includes("valid email")) {
     return "Please enter a valid email address.";
+  }
+  if (lower.includes("not configured")) {
+    return "Server login is not configured. Set AUTH_SECRET in .env.local and restart npm run dev.";
   }
   return message;
 }
@@ -106,52 +114,32 @@ export function AuthModal({
       return;
     }
 
-    if (!isSupabaseConfigured()) {
-      setError(
-        "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local, then restart npm run dev."
-      );
-      return;
-    }
-
     setLoading(true);
 
     try {
-      const supabase = getSupabase();
-
       if (mode === "login") {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: trimmedEmail,
-          password,
-        });
-
-        if (signInError) {
-          throw signInError;
+        const result = await loginWithPassword(trimmedEmail, password);
+        if ("error" in result) {
+          throw new Error(result.error);
         }
 
+        await fetchCurrentUser();
         onSuccess?.("login");
         onClose();
         return;
       }
 
-      const { data, error: signUpError } = await supabase.auth.signUp({
+      const result = await registerWithPassword({
         email: trimmedEmail,
         password,
       });
 
-      if (signUpError) {
-        throw signUpError;
+      if ("error" in result) {
+        throw new Error(result.error);
       }
 
-      if (data.session) {
-        onSuccess?.("register");
-        onClose();
-        return;
-      }
-
-      setMessage(
-        "Check your email to confirm your account, then log in."
-      );
-      switchMode("login");
+      onSuccess?.("register");
+      onClose();
     } catch (err) {
       const raw =
         err instanceof Error ? err.message : "Authentication failed.";
@@ -160,8 +148,6 @@ export function AuthModal({
       setLoading(false);
     }
   };
-
-  const supabaseReady = isSupabaseConfigured();
 
   if (!open) return null;
 
@@ -244,21 +230,12 @@ export function AuthModal({
           </button>
         </div>
 
-        {!supabaseReady && (
+        {!isAuthClientConfigured() && (
           <p className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Supabase is not configured. Copy{" "}
-            <code className="text-xs">.env.example</code> to{" "}
-            <code className="text-xs">.env.local</code> and paste your Project
-            URL + anon key from{" "}
-            <a
-              href="https://supabase.com/dashboard/project/_/settings/api"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium underline underline-offset-2"
-            >
-              Supabase Dashboard → Settings → API
-            </a>
-            . Restart the dev server after saving.
+            Login requires server configuration:{" "}
+            <code className="text-xs">DATABASE_URL</code> and{" "}
+            <code className="text-xs">AUTH_SECRET</code> in{" "}
+            <code className="text-xs">.env.local</code>.
           </p>
         )}
 
@@ -343,7 +320,7 @@ export function AuthModal({
 
           <button
             type="submit"
-            disabled={loading || !supabaseReady}
+            disabled={loading || !isAuthClientConfigured()}
             className="w-full rounded-full bg-slate-900 py-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading

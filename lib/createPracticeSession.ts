@@ -1,4 +1,4 @@
-import type { TypedSupabaseClient } from "@/lib/supabase";
+import { queryOne } from "@/lib/db";
 import { mapPracticeSessionRow } from "@/lib/practiceSessionMapper";
 import type {
   CreatePracticeSessionRequest,
@@ -97,7 +97,6 @@ function resolveTaskConfig(
 }
 
 export async function createPracticeSession(
-  supabase: TypedSupabaseClient,
   userId: string,
   input: CreatePracticeSessionRequest
 ): Promise<PracticeSessionRecord> {
@@ -109,30 +108,32 @@ export async function createPracticeSession(
   const task = resolveTaskConfig(input);
   const status: SessionStatus = input.status ?? "pending";
 
-  const { data, error } = await supabase
-    .from("practice_sessions")
-    .insert({
-      user_id: userId,
-      task_number: task.taskNumber,
-      task_type: task.taskType,
-      prompt_text: promptText,
-      reading_passage: input.readingPassage?.trim() || null,
-      listening_transcript: input.listeningTranscript?.trim() || null,
-      audio_prompt_url: input.audioPromptUrl?.trim() || null,
-      prep_time_seconds: task.prepTimeSeconds,
-      response_time_seconds: task.responseTimeSeconds,
+  const row = await queryOne<Record<string, unknown>>(
+    `INSERT INTO practice_sessions (
+      user_id, task_number, task_type, prompt_text,
+      reading_passage, listening_transcript, audio_prompt_url,
+      prep_time_seconds, response_time_seconds, status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *`,
+    [
+      userId,
+      task.taskNumber,
+      task.taskType,
+      promptText,
+      input.readingPassage?.trim() || null,
+      input.listeningTranscript?.trim() || null,
+      input.audioPromptUrl?.trim() || null,
+      task.prepTimeSeconds,
+      task.responseTimeSeconds,
       status,
-    })
-    .select("*")
-    .single();
+    ]
+  );
 
-  if (error || !data) {
-    throw new Error(
-      `Failed to create practice session: ${error?.message ?? "unknown"}`
-    );
+  if (!row) {
+    throw new Error("Failed to create practice session.");
   }
 
-  const session = mapPracticeSessionRow(data as Record<string, unknown>);
+  const session = mapPracticeSessionRow(row);
 
   if (input.promptId) {
     return { ...session, promptId: input.promptId };

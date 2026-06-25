@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isLowMicQualityRecording } from "@/lib/examRecordings";
+import {
+  formatMicrophoneError,
+  getMicrophoneEnvironmentError,
+  releaseMicrophoneStream,
+} from "@/lib/microphone";
 
 export type RecordingStatus =
   | "idle"
@@ -15,9 +20,7 @@ export interface RecordingResult {
   url: string;
   mimeType: string;
   durationMs: number;
-  /** Peak mic level 0–1 while recording (exam diagnostics). */
   peakLevel?: number;
-  /** Exam mode: mic level or file size suggests little/no speech was captured. */
   lowMicQuality?: boolean;
 }
 
@@ -28,15 +31,11 @@ export interface RecordButtonProps {
   onStatusChange?: (status: RecordingStatus) => void;
   onError?: (error: Error) => void;
   disabled?: boolean;
-  /** Increment to programmatically start when idle */
   startSignal?: number;
-  /** Increment to programmatically stop when recording */
   stopSignal?: number;
-  /** Hide manual start/stop — exam automation only */
   hideControls?: boolean;
-  /** Exam mode: lighter noise processing, flags low mic level (does not block). */
   examMode?: boolean;
-  /** Called when mic stream is live (for level meters) */
+  /** Non-exam only — exam mode skips stream sharing to avoid level-meter conflicts. */
   onStreamReady?: (stream: MediaStream | null) => void;
   className?: string;
 }
@@ -48,6 +47,8 @@ const MIME_TYPES = [
   "audio/ogg;codecs=opus",
 ] as const;
 
+const MIN_RECORDING_MS = 400;
+
 function getSupportedMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "";
   for (const type of MIME_TYPES) {
@@ -56,14 +57,12 @@ function getSupportedMimeType(): string {
   return "";
 }
 
-const MIN_RECORDING_MS = 400;
-
 function flushRecorderData(recorder: MediaRecorder): void {
   if (recorder.state === "recording" && typeof recorder.requestData === "function") {
     try {
       recorder.requestData();
     } catch {
-      // ignore — some browsers throw if no data yet
+      // ignore
     }
   }
 }
@@ -101,75 +100,34 @@ export function RecordButton({
   const [elapsedMs, setElapsedMs] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const statusRef = useRef<RecordingStatus>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const recordingStartRef = useRef<number>(0);
+  const recordingStartRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingStopRef = useRef(false);
   const stopRecordingRef = useRef<() => void>(() => undefined);
-  const mountedRef = useRef(true);
-  const peakLevelRef = useRef(0);
-  const levelContextRef = useRef<AudioContext | null>(null);
-  const levelRafRef = useRef(0);
+  const activeSessionRef = useRef(0);
 
   const updateStatus = useCallback(
     (next: RecordingStatus) => {
+      statusRef.current = next;
       setStatus(next);
       onStatusChange?.(next);
     },
     [onStatusChange]
   );
 
-  const clearLevelMonitor = useCallback(() => {
-    if (levelRafRef.current) {
-      cancelAnimationFrame(levelRafRef.current);
-      levelRafRef.current = 0;
-    }
-    if (levelContextRef.current) {
-      void levelContextRef.current.close();
-      levelContextRef.current = null;
-    }
-    peakLevelRef.current = 0;
-  }, []);
-
-  const startLevelMonitor = useCallback((stream: MediaStream) => {
-    clearLevelMonitor();
-    peakLevelRef.current = 0;
-    const ctx = new AudioContext();
-    levelContextRef.current = ctx;
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-
-    const tick = () => {
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i += 1) {
-        const v = (data[i]! - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / data.length);
-      const level = Math.min(1, rms * 4);
-      if (level > peakLevelRef.current) {
-        peakLevelRef.current = level;
-      }
-      levelRafRef.current = requestAnimationFrame(tick);
-    };
-
-    void ctx.resume().then(() => {
-      levelRafRef.current = requestAnimationFrame(tick);
-    });
-  }, [clearLevelMonitor]);
-
   const stopStream = useCallback(() => {
-    clearLevelMonitor();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    onStreamReady?.(null);
-  }, [onStreamReady, clearLevelMonitor]);
+    if (streamRef.current) {
+      releaseMicrophoneStream(streamRef.current);
+      streamRef.current = null;
+      if (!examMode) {
+        onStreamReady?.(null);
+      }
+    }
+  }, [onStreamReady, examMode]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -194,8 +152,8 @@ export function RecordButton({
   const startRecording = useCallback(async () => {
     if (
       disabled ||
-      status === "recording" ||
-      status === "requesting"
+      statusRef.current === "recording" ||
+      statusRef.current === "requesting"
     ) {
       return;
     }
@@ -203,17 +161,18 @@ export function RecordButton({
     setErrorMessage(null);
     updateStatus("requesting");
 
+    const sessionId = ++activeSessionRef.current;
+    let stream: MediaStream | null = null;
+
     try {
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        throw new Error("Microphone access is not supported in this browser.");
+        throw new Error(
+          getMicrophoneEnvironmentError() ??
+            "Microphone access is not supported in this browser."
+        );
       }
 
-      const mimeType = getSupportedMimeType();
-      if (!mimeType) {
-        throw new Error("No supported audio recording format found.");
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: examMode
           ? {
               echoCancellation: true,
@@ -227,24 +186,38 @@ export function RecordButton({
             },
       });
 
-      if (!mountedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+      if (sessionId !== activeSessionRef.current) {
+        releaseMicrophoneStream(stream);
         return;
       }
 
       if (pendingStopRef.current) {
         pendingStopRef.current = false;
-        stream.getTracks().forEach((track) => track.stop());
+        releaseMicrophoneStream(stream);
         updateStatus("idle");
         return;
       }
 
-      streamRef.current = stream;
-      onStreamReady?.(stream);
-      startLevelMonitor(stream);
-      chunksRef.current = [];
+      const mimeType = getSupportedMimeType();
+      let mediaRecorder: MediaRecorder;
+      let resolvedMime = mimeType || "audio/webm";
 
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      try {
+        mediaRecorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
+        resolvedMime = mediaRecorder.mimeType || resolvedMime;
+      } catch {
+        mediaRecorder = new MediaRecorder(stream);
+        resolvedMime = mediaRecorder.mimeType || "audio/webm";
+      }
+
+      streamRef.current = stream;
+      if (!examMode) {
+        onStreamReady?.(stream);
+      }
+
+      chunksRef.current = [];
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event: BlobEvent) => {
@@ -254,23 +227,26 @@ export function RecordButton({
       };
 
       mediaRecorder.onerror = () => {
-        handleError(new Error("MediaRecorder encountered an error."));
+        if (sessionId === activeSessionRef.current) {
+          handleError(new Error("MediaRecorder encountered an error."));
+        }
       };
 
       mediaRecorder.onstop = () => {
+        if (sessionId !== activeSessionRef.current) {
+          return;
+        }
+
         clearTimer();
 
         const durationMs = Date.now() - recordingStartRef.current;
-        const peakLevel = peakLevelRef.current;
-
-        stopStream();
-
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const blob = new Blob(chunksRef.current, { type: resolvedMime });
 
         chunksRef.current = [];
         mediaRecorderRef.current = null;
         pendingStopRef.current = false;
 
+        stopStream();
         setElapsedMs(0);
         onRecordingStop?.();
 
@@ -284,26 +260,26 @@ export function RecordButton({
         }
 
         const url = URL.createObjectURL(blob);
-
         const lowMicQuality = isLowMicQualityRecording({
           examMode,
           durationMs,
-          peakLevel,
+          peakLevel: 0,
           blobSize: blob.size,
         });
 
         onRecordingComplete?.({
           blob,
           url,
-          mimeType,
+          mimeType: resolvedMime,
           durationMs,
-          peakLevel,
+          peakLevel: 0,
           lowMicQuality,
         });
         updateStatus("idle");
       };
 
-      mediaRecorder.start(250);
+      // No timeslice — one blob on stop (reliable on Windows; timeslice caused empty files).
+      mediaRecorder.start();
       recordingStartRef.current = Date.now();
       setElapsedMs(0);
 
@@ -318,13 +294,13 @@ export function RecordButton({
         window.setTimeout(() => stopRecordingRef.current(), MIN_RECORDING_MS);
       }
     } catch (err) {
-      handleError(
-        err instanceof Error ? err : new Error("Failed to start recording.")
-      );
+      if (stream) releaseMicrophoneStream(stream);
+      if (sessionId === activeSessionRef.current) {
+        handleError(new Error(formatMicrophoneError(err)));
+      }
     }
   }, [
     disabled,
-    status,
     updateStatus,
     onRecordingStart,
     onRecordingStop,
@@ -334,7 +310,6 @@ export function RecordButton({
     clearTimer,
     stopStream,
     examMode,
-    startLevelMonitor,
   ]);
 
   const stopRecording = useCallback(() => {
@@ -356,7 +331,10 @@ export function RecordButton({
 
     const elapsed = Date.now() - recordingStartRef.current;
     if (elapsed < MIN_RECORDING_MS) {
-      window.setTimeout(() => stopRecordingRef.current(), MIN_RECORDING_MS - elapsed);
+      window.setTimeout(
+        () => stopRecordingRef.current(),
+        MIN_RECORDING_MS - elapsed
+      );
       return;
     }
 
@@ -369,23 +347,8 @@ export function RecordButton({
 
   stopRecordingRef.current = stopRecording;
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const handleToggle = () => {
-    if (status === "recording") {
-      stopRecording();
-    } else if (status === "idle" || status === "error") {
-      void startRecording();
-    }
-  };
-
-  const lastStartSignal = useRef(0);
-  const lastStopSignal = useRef(0);
+  const lastStartSignal = useRef(startSignal);
+  const lastStopSignal = useRef(stopSignal);
 
   useEffect(() => {
     if (
@@ -417,9 +380,16 @@ export function RecordButton({
 
   useEffect(() => {
     return () => {
+      activeSessionRef.current += 1;
       clearTimer();
-      if (mediaRecorderRef.current?.state === "recording") {
-        mediaRecorderRef.current.stop();
+      const recorder = mediaRecorderRef.current;
+      if (recorder?.state === "recording") {
+        try {
+          flushRecorderData(recorder);
+          recorder.stop();
+        } catch {
+          // ignore
+        }
       }
       stopStream();
     };
@@ -434,7 +404,10 @@ export function RecordButton({
       {!hideControls ? (
         <button
           type="button"
-          onClick={handleToggle}
+          onClick={() => {
+            if (status === "recording") stopRecording();
+            else if (status === "idle" || status === "error") void startRecording();
+          }}
           disabled={isBusy}
           aria-label={isRecording ? "Stop recording" : "Start recording"}
           aria-pressed={isRecording}
@@ -474,9 +447,6 @@ export function RecordButton({
             <p className="mt-1 text-xs text-red-600">{errorMessage}</p>
           )}
         </div>
-      )}
-      {hideControls && errorMessage && (
-        <p className="text-xs text-red-600">{errorMessage}</p>
       )}
     </div>
   );

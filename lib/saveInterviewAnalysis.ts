@@ -1,6 +1,7 @@
 import type { FeedbackSection } from "@/components/FeedbackCard";
 import type { InterviewScores } from "@/components/InterviewScoreCard";
-import type { TypedSupabaseClient } from "@/lib/supabase";
+import { withTransaction } from "@/lib/db";
+import type { PoolClient } from "pg";
 import type { PythonBehaviorMetrics } from "@/lib/pythonSpeechApi";
 
 export interface SaveInterviewInput {
@@ -57,92 +58,76 @@ function sectionContent(
 }
 
 export async function saveInterviewAnalysis(
-  supabase: TypedSupabaseClient,
   input: SaveInterviewInput
 ): Promise<SavedInterviewRecord> {
   const ets = interviewToEts(input.scores);
   const now = new Date().toISOString();
   const prepSeconds = 15;
   const responseSeconds = input.responseSeconds === 60 ? 60 : 45;
-
-  const { data: session, error: sessionError } = await supabase
-    .from("practice_sessions")
-    .insert({
-      user_id: input.userId,
-      task_number: "1",
-      task_type: "independent",
-      prompt_text: input.question,
-      prep_time_seconds: prepSeconds,
-      response_time_seconds: responseSeconds,
-      status: "completed",
-      completed_at: now,
-    })
-    .select("id")
-    .single();
-
-  if (sessionError || !session?.id) {
-    throw new Error(
-      `Failed to create practice session: ${sessionError?.message ?? "unknown"}`
-    );
-  }
-
-  const sessionId = session.id as string;
-
-  const { data: audioRow, error: audioError } = await supabase
-    .from("audio_responses")
-    .insert({
-      session_id: sessionId,
-      user_id: input.userId,
-      storage_path: input.storagePath,
-      audio_url: input.audioUrl,
-      mime_type: "audio/webm",
-      duration_seconds: Math.max(0.1, input.durationSeconds),
-      transcript: input.transcript,
-      transcript_language: "en-US",
-    })
-    .select("id")
-    .single();
-
-  if (audioError || !audioRow?.id) {
-    throw new Error(
-      `Failed to save audio response: ${audioError?.message ?? "unknown"}`
-    );
-  }
-
-  const audioResponseId = audioRow.id as string;
   const { sections } = input.feedback;
 
-  const { data: scoreRow, error: scoreError } = await supabase
-    .from("scores")
-    .insert({
-      audio_response_id: audioResponseId,
-      session_id: sessionId,
-      user_id: input.userId,
-      delivery_score: ets.delivery_score,
-      language_use_score: ets.language_use_score,
-      topic_development_score: ets.topic_development_score,
-      scaled_score: ets.scaled_score,
-      delivery_feedback:
-        sectionContent(sections, "delivery", "pace") ?? input.scoreSummary,
-      language_use_feedback:
-        sectionContent(sections, "language", "grammar") ?? input.feedback.summary,
-      topic_development_feedback:
-        sectionContent(sections, "topic") ?? null,
-      overall_feedback: input.feedback.summary || input.scoreSummary,
-      ai_model: input.aiModel ?? "python-api",
-    })
-    .select("id")
-    .single();
-
-  if (scoreError || !scoreRow?.id) {
-    throw new Error(
-      `Failed to save scores: ${scoreError?.message ?? "unknown"}`
+  return withTransaction(async (client: PoolClient) => {
+    const sessionResult = await client.query<{ id: string }>(
+      `INSERT INTO practice_sessions (
+        user_id, task_number, task_type, prompt_text,
+        prep_time_seconds, response_time_seconds, status, completed_at
+      ) VALUES ($1, '1', 'independent', $2, $3, $4, 'completed', $5)
+      RETURNING id`,
+      [input.userId, input.question, prepSeconds, responseSeconds, now]
     );
-  }
+    const sessionId = sessionResult.rows[0]?.id;
+    if (!sessionId) {
+      throw new Error("Failed to create practice session.");
+    }
 
-  return {
-    sessionId,
-    audioResponseId,
-    scoreId: scoreRow.id as string,
-  };
+    const audioResult = await client.query<{ id: string }>(
+      `INSERT INTO audio_responses (
+        session_id, user_id, storage_path, audio_url, mime_type,
+        duration_seconds, transcript, transcript_language
+      ) VALUES ($1, $2, $3, $4, 'audio/webm', $5, $6, 'en-US')
+      RETURNING id`,
+      [
+        sessionId,
+        input.userId,
+        input.storagePath,
+        input.audioUrl,
+        Math.max(0.1, input.durationSeconds),
+        input.transcript,
+      ]
+    );
+    const audioResponseId = audioResult.rows[0]?.id;
+    if (!audioResponseId) {
+      throw new Error("Failed to save audio response.");
+    }
+
+    const scoreResult = await client.query<{ id: string }>(
+      `INSERT INTO scores (
+        audio_response_id, session_id, user_id,
+        delivery_score, language_use_score, topic_development_score,
+        scaled_score, delivery_feedback, language_use_feedback,
+        topic_development_feedback, overall_feedback, ai_model
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id`,
+      [
+        audioResponseId,
+        sessionId,
+        input.userId,
+        ets.delivery_score,
+        ets.language_use_score,
+        ets.topic_development_score,
+        ets.scaled_score,
+        sectionContent(sections, "delivery", "pace") ?? input.scoreSummary,
+        sectionContent(sections, "language", "grammar") ?? input.feedback.summary,
+        sectionContent(sections, "topic") ?? null,
+        input.feedback.summary || input.scoreSummary,
+        input.aiModel ?? "python-api",
+      ]
+    );
+    const scoreId = scoreResult.rows[0]?.id;
+    if (!scoreId) {
+      throw new Error("Failed to save scores.");
+    }
+
+    return { sessionId, audioResponseId, scoreId };
+  });
 }

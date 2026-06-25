@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import type { AnalysisJobPollResponse } from "@/lib/analysisJobTypes";
 import { finalizeListenRepeatAnalysis } from "@/lib/finalizeListenRepeatAnalysis";
 import { mapPythonListenRepeatRequest } from "@/lib/mapPythonJobRequest";
+import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import {
   PythonSpeechApiError,
   getPythonJobStatus,
   setPythonJobClientResult,
   type PythonAnalyzeSpeechResponse,
 } from "@/lib/pythonSpeechApi";
-import { createSupabaseServerClientSafe } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,13 +49,13 @@ export async function GET(
       } satisfies AnalysisJobPollResponse);
     }
 
-    const supabase = await createSupabaseServerClientSafe();
+    const user = await getCurrentUser();
     const requestBody = mapPythonListenRepeatRequest(job.request ?? undefined);
 
     const finalized = await finalizeListenRepeatAnalysis(
       requestBody,
       job.result as PythonAnalyzeSpeechResponse,
-      supabase
+      user?.id
     );
 
     await setPythonJobClientResult(jobId, finalized).catch(() => undefined);

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 DEFAULT_MODEL = "glm-4.7"
 DEFAULT_TIMEOUT = 60.0
+GLM_RATE_LIMIT_RETRIES = 4
+GLM_RATE_LIMIT_BASE_DELAY = 2.0
 
 INTERVIEW_SCORE_KEYS = ("topic", "pace", "pronunciation", "grammar")
 LISTEN_REPEAT_SCORE_KEY = "score"
@@ -255,12 +258,33 @@ def call_glm(
     )
 
     try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0.2,
-        )
+        completion = None
+        last_rate_limit: GlmApiError | None = None
+        for attempt in range(GLM_RATE_LIMIT_RETRIES):
+            try:
+                completion = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                )
+                break
+            except RateLimitError as exc:
+                last_rate_limit = _map_openai_error(exc)
+                if attempt >= GLM_RATE_LIMIT_RETRIES - 1:
+                    raise last_rate_limit from exc
+                delay = GLM_RATE_LIMIT_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    "Zhipu rate limit — retry %s/%s in %.1fs",
+                    attempt + 1,
+                    GLM_RATE_LIMIT_RETRIES,
+                    delay,
+                )
+                time.sleep(delay)
+        if completion is None:
+            raise last_rate_limit or GlmApiError("Zhipu API request failed.")
+    except GlmApiError:
+        raise
     except Exception as exc:
         raise _map_openai_error(exc) from exc
 

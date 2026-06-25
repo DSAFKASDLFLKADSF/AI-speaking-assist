@@ -15,6 +15,12 @@ Dashboard → **Project Settings** → **API**：
 | **Project URL** | `NEXT_PUBLIC_SUPABASE_URL` |
 | **anon public** key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
 
+**常见错误：** 不要把 API 文档里的 curl 地址（带 `/rest/v1`）填进 `NEXT_PUBLIC_SUPABASE_URL`。  
+正确：`https://xxxx.supabase.co`  
+错误：`https://xxxx.supabase.co/rest/v1` → 注册会报 `Invalid path specified in request URL`
+
+改完 `.env.local` 后必须 **`npm run build`**（生产环境）或 **重启 `npm run dev`**（本地）。
+
 ## 3. 初始化数据库
 
 SQL Editor → **New query**，依次执行：

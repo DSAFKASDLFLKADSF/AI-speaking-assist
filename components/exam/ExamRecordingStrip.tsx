@@ -58,12 +58,35 @@ export function ExamRecordingStrip({
           </div>
 
           <div className="min-w-0 flex-1">
-            <LiveAudioLevel
-              active={isRecording}
-              stream={micStream}
-              compact
-              className="border-0 bg-transparent px-0 py-0"
-            />
+            {micStream ? (
+              <LiveAudioLevel
+                active={isRecording}
+                stream={micStream}
+                compact
+                className="border-0 bg-transparent px-0 py-0"
+              />
+            ) : (
+              <div className="flex h-8 items-center justify-center gap-1">
+                {isRecording
+                  ? Array.from({ length: 24 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="w-1 animate-pulse rounded-sm bg-emerald-500"
+                        style={{
+                          height: `${20 + (i % 5) * 12}%`,
+                          animationDelay: `${i * 40}ms`,
+                        }}
+                      />
+                    ))
+                  : (
+                      <span className="text-xs text-slate-400">
+                        {recordingStatus === "requesting"
+                          ? "Starting microphone…"
+                          : "Ready to record"}
+                      </span>
+                    )}
+              </div>
+            )}
           </div>
 
           <div className="flex shrink-0 items-center gap-2">

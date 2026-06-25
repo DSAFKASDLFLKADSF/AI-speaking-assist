@@ -62,6 +62,49 @@ def _suffix_from_url(url: str) -> str | None:
     return None
 
 
+def is_publicly_fetchable_url(url: str) -> bool:
+    """True when a cloud API (e.g. AssemblyAI) can download this URL over the internet."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host or parsed.scheme not in ("http", "https"):
+            return False
+        if host in ("localhost", "127.0.0.1", "[::1]", "0.0.0.0"):
+            return False
+        if host.endswith(".local"):
+            return False
+        if host.startswith("192.168.") or host.startswith("10."):
+            return False
+        if host.startswith("172."):
+            parts = host.split(".")
+            if len(parts) >= 2:
+                try:
+                    if 16 <= int(parts[1]) <= 31:
+                        return False
+                except ValueError:
+                    pass
+        return True
+    except Exception:
+        return False
+
+
+def normalize_local_fetch_url(url: str) -> str:
+    """Use 127.0.0.1 instead of localhost for same-machine HTTP fetches."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if host not in ("localhost", "[::1]"):
+            return url
+        port = parsed.port
+        if port:
+            netloc = f"127.0.0.1:{port}"
+        else:
+            netloc = "127.0.0.1"
+        return parsed._replace(netloc=netloc).geturl()
+    except Exception:
+        return url
+
+
 def download_audio(
     url: str,
     *,
@@ -73,6 +116,7 @@ def download_audio(
 
     The caller is responsible for deleting the file via `DownloadedAudio.cleanup()`.
     """
+    url = normalize_local_fetch_url(url)
     response = requests.get(
         url,
         stream=True,

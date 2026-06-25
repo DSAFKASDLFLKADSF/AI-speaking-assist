@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { getPracticeHistory } from "@/lib/getPracticeHistory";
+import { AuthError, requireUser } from "@/lib/auth/getCurrentUser";
+import { isAuthConfigured } from "@/lib/auth/session";
 import type {
   PracticeHistoryQuery,
   PracticeHistoryResponse,
 } from "@/lib/history-types";
 import type { SessionStatus, ToeflTaskNumber } from "@/lib/session-types";
-import { createSupabaseServerClient } from "@/lib/supabase-server";
+
 export const runtime = "nodejs";
 
 const SESSION_STATUSES: SessionStatus[] = [
@@ -44,24 +46,15 @@ function parseQuery(searchParams: URLSearchParams): PracticeHistoryQuery {
 }
 
 export async function GET(request: Request) {
+  if (!isAuthConfigured()) {
+    return NextResponse.json(
+      { error: "Auth is not configured on this server." },
+      { status: 503 }
+    );
+  }
+
   try {
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 401 });
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "You must be logged in to view practice history." },
-        { status: 401 }
-      );
-    }
-
+    const user = await requireUser();
     const { searchParams } = new URL(request.url);
     const query = parseQuery(searchParams);
 
@@ -75,11 +68,15 @@ export async function GET(request: Request) {
       );
     }
 
-    const history = await getPracticeHistory(supabase, user.id, query);
+    const history = await getPracticeHistory(user.id, query);
     const response: PracticeHistoryResponse = history;
 
     return NextResponse.json(response);
   } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: 401 });
+    }
+
     const message =
       err instanceof Error ? err.message : "Failed to load practice history.";
     return NextResponse.json({ error: message }, { status: 500 });

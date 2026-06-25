@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { User } from "@supabase/supabase-js";
 import { AuthModal, type AuthMode } from "@/components/AuthModal";
 import { getLocalHistory } from "@/lib/localHistory";
 import { MOCK_TEST_SETS } from "@/lib/testLibrary";
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
+import type { PublicUser } from "@/lib/auth/types";
+import { fetchCurrentUser, logout } from "@/lib/auth/client";
 
 type Panel = "search" | "notifications" | "account" | null;
 
@@ -112,7 +112,7 @@ const TONE_STYLE: Record<NotificationItem["tone"], string> = {
   reminder: "border-l-amber-500 bg-amber-50/60",
 };
 
-function displayEmail(user: User): string {
+function displayEmail(user: PublicUser): string {
   return user.email ?? "Account";
 }
 
@@ -120,7 +120,7 @@ export function HeaderActions() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [signingOut, setSigningOut] = useState(false);
@@ -130,17 +130,7 @@ export function HeaderActions() {
   useClickOutside(rootRef, closePanel, panel != null);
 
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-    const supabase = getSupabase();
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-    return () => subscription.unsubscribe();
+    void fetchCurrentUser().then(setUser);
   }, []);
 
   useEffect(() => {
@@ -156,14 +146,19 @@ export function HeaderActions() {
   };
 
   const handleSignOut = async () => {
-    if (!isSupabaseConfigured()) return;
     setSigningOut(true);
     try {
-      await getSupabase().auth.signOut();
+      await logout();
+      setUser(null);
       setPanel(null);
     } finally {
       setSigningOut(false);
     }
+  };
+
+  const handleAuthSuccess = async () => {
+    const current = await fetchCurrentUser();
+    setUser(current);
   };
 
   const toggle = (next: Panel) => {
@@ -359,6 +354,7 @@ export function HeaderActions() {
         open={authOpen}
         onClose={() => setAuthOpen(false)}
         defaultMode={authMode}
+        onSuccess={handleAuthSuccess}
       />
     </>
   );

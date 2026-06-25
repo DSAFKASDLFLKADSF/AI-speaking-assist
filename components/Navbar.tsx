@@ -2,42 +2,36 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import type { User } from "@supabase/supabase-js";
 import { AuthModal, type AuthMode } from "@/components/AuthModal";
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
+import {
+  fetchCurrentUser,
+  logout,
+} from "@/lib/auth/client";
+import type { PublicUser } from "@/lib/auth/types";
 
 const navLinks = [
   { label: "Test Library", href: "/dashboard" },
   { label: "Growth", href: "/growth" },
 ] as const;
 
-function displayEmail(user: User): string {
+function displayEmail(user: PublicUser): string {
   return user.email ?? "Account";
 }
 
 export function Navbar() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [signingOut, setSigningOut] = useState(false);
 
-  useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-
-    const supabase = getSupabase();
-
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+  const refreshUser = useCallback(async () => {
+    const current = await fetchCurrentUser();
+    setUser(current);
   }, []);
+
+  useEffect(() => {
+    void refreshUser();
+  }, [refreshUser]);
 
   const openAuth = useCallback((mode: AuthMode) => {
     setAuthMode(mode);
@@ -45,13 +39,17 @@ export function Navbar() {
   }, []);
 
   const handleSignOut = async () => {
-    if (!isSupabaseConfigured()) return;
     setSigningOut(true);
     try {
-      await getSupabase().auth.signOut();
+      await logout();
+      setUser(null);
     } finally {
       setSigningOut(false);
     }
+  };
+
+  const handleAuthSuccess = async () => {
+    await refreshUser();
   };
 
   return (
@@ -66,10 +64,7 @@ export function Navbar() {
               TOEFL Speaking AI
             </Link>
 
-            <nav
-              aria-label="Main"
-              className="hidden items-center gap-1 md:flex"
-            >
+            <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
@@ -84,10 +79,7 @@ export function Navbar() {
             <div className="flex shrink-0 items-center gap-2 sm:gap-3">
               {user ? (
                 <>
-                  <span
-                    className="hidden max-w-[140px] truncate text-sm text-slate-600 sm:inline"
-                    title={displayEmail(user)}
-                  >
+                  <span className="hidden max-w-[160px] truncate text-sm text-slate-600 sm:inline">
                     {displayEmail(user)}
                   </span>
                   <button
@@ -141,6 +133,7 @@ export function Navbar() {
         open={authOpen}
         onClose={() => setAuthOpen(false)}
         defaultMode={authMode}
+        onSuccess={handleAuthSuccess}
       />
     </>
   );

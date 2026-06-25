@@ -13,14 +13,20 @@
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.106.2",
+    "bcryptjs": "^3.0.3",
+    "jose": "^6.2.3",
     "next": "14.2.35",
     "openai": "^6.39.1",
+    "pg": "^8.21.0",
+    "pg-mem": "^3.0.14",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "wavesurfer.js": "^7.12.7"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.17.10",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
