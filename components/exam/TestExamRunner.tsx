@@ -92,21 +92,17 @@ import {
 
   buildBatchAnalysisErrorMessage,
   collectUnscoredFailures,
-
+  findResumeIvIndex,
+  formatAnalysisError,
+  formatUploadError,
   buildLowMicQualityWarning,
-
   dedupeRecordings,
-
   getExpectedRecordingCount,
-
   getScoringRecordings,
-
   mergeExamAnalysisResults,
-
+  needsInterviewContinuation,
   recordingKey,
-
   upsertRecording,
-
 } from "@/lib/examRecordings";
 
 import {
@@ -496,7 +492,15 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
           draft.recordings,
 
-          draft.results
+          draft.results,
+
+          {
+            mode: draft.mode,
+            lrIndex: draft.lrIndex,
+            ivIndex: draft.ivIndex,
+            lrTotal: plan.listenRepeat.length,
+            ivTotal: plan.interviewSession.questions.length,
+          }
 
         ) as ExamStage
 
@@ -1010,7 +1014,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
         setErrorMessage(
 
-          err instanceof Error ? err.message : "Analysis failed."
+          formatAnalysisError(
+
+            err instanceof Error ? err.message : "Analysis failed."
+
+          )
 
         );
 
@@ -1397,9 +1405,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       } catch (err) {
 
-        const message =
+        const message = formatUploadError(
 
-          err instanceof Error ? err.message : "Upload failed.";
+          err instanceof Error ? err.message : "Upload failed."
+
+        );
 
         setRecordingError(message);
 
@@ -1486,6 +1496,10 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const startSectionComplete = () => {
 
+    if (needsInterviewContinuation(mode, recordings, plan)) {
+      return;
+    }
+
     const normalized = getScoringRecordings(recordings, plan, mode);
 
     const removedDupes = recordings.length - normalized.length;
@@ -1517,6 +1531,42 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
     }
 
   };
+
+
+
+  const continueToInterview = () => {
+
+    const nextIvIndex = findResumeIvIndex(recordings, plan);
+
+    setIvIndex(nextIvIndex);
+
+    setQuestionAudioKey((k) => k + 1);
+
+    setStage(
+
+      nextIvIndex === 0 &&
+
+        !recordings.some((r) => r.kind === "interview")
+
+        ? "iv_instruction"
+
+        : "iv_question_listen"
+
+    );
+
+  };
+
+
+
+  const interviewStillNeeded = needsInterviewContinuation(
+
+    mode,
+
+    recordings,
+
+    plan
+
+  );
 
 
 
@@ -2762,7 +2812,37 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             )}
 
-            {wantScoring ? (
+            {interviewStillNeeded && (
+
+              <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
+
+                Listen & Repeat is done. Continue to Virtual Interview to finish
+
+                the full test ({scoringRecordings.filter((r) => r.kind === "interview").length} of{" "}
+
+                {plan.interviewSession.questions.length} interview questions recorded).
+
+              </p>
+
+            )}
+
+            {interviewStillNeeded ? (
+
+              <button
+
+                type="button"
+
+                onClick={continueToInterview}
+
+                className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white"
+
+              >
+
+                Continue to Virtual Interview
+
+              </button>
+
+            ) : wantScoring ? (
 
               <>
 
@@ -3142,7 +3222,21 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                       <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
 
-                        Recording saved (no score).
+                        {(() => {
+
+                          const row = partialResults.listenRepeat.find(
+
+                            (r) => r.pending.promptId === pending.promptId
+
+                          );
+
+                          return row?.error
+
+                            ? formatAnalysisError(row.error)
+
+                            : "Recording saved (no score yet).";
+
+                        })()}
 
                       </p>
 
@@ -3228,7 +3322,21 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                         <p className="mt-3 text-sm text-slate-500">
 
-                          Recording saved (no score).
+                          {(() => {
+
+                            const row = partialResults.interview.find(
+
+                              (r) => r.pending.questionId === pending.questionId
+
+                            );
+
+                            return row?.error
+
+                              ? formatAnalysisError(row.error)
+
+                              : "Recording saved (no score yet).";
+
+                          })()}
 
                         </p>
 
@@ -3310,7 +3418,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-        {errorMessage && missingAnalysisCount > 0 && (
+        {errorMessage && missingAnalysisCount > 0 && stage !== "results" && (
 
           <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
 

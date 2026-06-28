@@ -74,16 +74,57 @@ function storageKey(testId: string, mode: TestExamMode): string {
   return `${KEY_PREFIX}${testId}:${mode}`;
 }
 
+export interface SanitizeRestoredStageContext {
+  mode: TestExamMode;
+  lrIndex: number;
+  ivIndex: number;
+  lrTotal: number;
+  ivTotal: number;
+}
+
+function countRecordingsByKind(
+  recordings: PersistedPendingRecording[],
+  kind: PersistedPendingRecording["kind"]
+): number {
+  const ids = new Set<string>();
+  for (const recording of recordings) {
+    if (recording.kind !== kind) continue;
+    const id =
+      kind === "listen_repeat"
+        ? (recording.promptId ?? recording.title)
+        : (recording.questionId ?? recording.title);
+    ids.add(id);
+  }
+  return ids.size;
+}
+
 /** Avoid restoring into a live recording / analysis state after refresh. */
 export function sanitizeRestoredStage(
   stage: PersistedExamStage,
   recordings: PersistedPendingRecording[],
-  results: PersistedExamResults | null
+  results: PersistedExamResults | null,
+  context?: SanitizeRestoredStageContext
 ): PersistedExamStage {
   if (results) return "results";
   if (stage === "analyzing") {
     return recordings.length > 0 ? "section_complete" : "ready";
   }
+
+  const lrDone =
+    context != null
+      ? countRecordingsByKind(recordings, "listen_repeat") >= context.lrTotal
+      : false;
+  const ivDone =
+    context != null
+      ? countRecordingsByKind(recordings, "interview") >= context.ivTotal
+      : false;
+
+  if (context?.mode === "full" && stage === "section_complete" && lrDone && !ivDone) {
+    return countRecordingsByKind(recordings, "interview") === 0
+      ? "section_break"
+      : "iv_item_complete";
+  }
+
   if (
     stage === "lr_recording" ||
     stage === "iv_recording" ||
@@ -92,16 +133,22 @@ export function sanitizeRestoredStage(
     stage === "iv_question_listen" ||
     stage === "iv_intro"
   ) {
-    if (recordings.length > 0) {
-      return "section_complete";
+    if (recordings.length === 0) {
+      return stage === "iv_recording" ||
+        stage === "iv_preparing" ||
+        stage === "iv_question_listen" ||
+        stage === "iv_intro"
+        ? "iv_instruction"
+        : "lr_instruction";
     }
-    return stage === "iv_recording" ||
-      stage === "iv_preparing" ||
-      stage === "iv_question_listen" ||
-      stage === "iv_intro"
-      ? "iv_instruction"
-      : "lr_instruction";
+
+    if (context?.mode === "full" && lrDone && stage.startsWith("lr")) {
+      return "section_break";
+    }
+
+    return stage.startsWith("iv") ? "iv_item_complete" : "lr_item_complete";
   }
+
   return stage;
 }
 

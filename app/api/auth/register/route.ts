@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Server auth is not configured. Set AUTH_SECRET in .env.local and restart npm run dev.",
+          "Server auth is not configured. Set DATABASE_URL and AUTH_SECRET in .env.local.",
       },
       { status: 503 }
     );

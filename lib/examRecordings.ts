@@ -156,18 +156,108 @@ export function mergeExamAnalysisResults<
   };
 }
 
-export function formatAnalysisError(message: string): string {
-  if (/empty transcript/i.test(message)) {
-    return "No speech detected (recording empty or too quiet). Re-record that question if needed.";
+const IS_DEV = process.env.NODE_ENV === "development";
+
+export function formatUploadError(message: string): string {
+  if (/logged in to upload/i.test(message)) {
+    return "Could not save your recording. Please sign in and try again.";
+  }
+  if (/policy|row-level|permission|denied|RLS|supabase/i.test(message)) {
+    return "Could not save your recording. Please try again in a moment.";
+  }
+  if (/mime|content.?type|400/i.test(message)) {
+    return "Could not save your recording (unsupported audio format). Try recording again.";
   }
   if (
     /ECONNREFUSED|fetch failed|Failed to fetch|network error|\b502\b|\b503\b|\b504\b/i.test(
       message
     )
   ) {
-    return `${message} Make sure the Python API is running on port 8000.`;
+    return IS_DEV
+      ? "Could not upload recording — server unreachable. Is the app running?"
+      : "Could not save your recording. Check your connection and try again.";
+  }
+  if (/upload failed/i.test(message)) {
+    return "Could not save your recording. Please try again.";
   }
   return message;
+}
+
+export function formatAnalysisError(message: string): string {
+  if (/empty transcript|no speech detected/i.test(message)) {
+    return "No speech detected — the recording may be empty or too quiet. Try re-recording.";
+  }
+  if (/ASSEMBLYAI|assemblyai|transcri/i.test(message)) {
+    return "Speech recognition failed. Try re-recording in a quiet place.";
+  }
+  if (/GLM|zhipu|rate limit|429/i.test(message)) {
+    return "Scoring service is busy. Wait a moment and tap “Score recordings” again.";
+  }
+  if (/timeout|timed out/i.test(message)) {
+    return "Scoring took too long. Try again.";
+  }
+  if (/401|403|api key|unauthorized/i.test(message)) {
+    return IS_DEV
+      ? "Scoring service authentication failed (check server API keys)."
+      : "Scoring is temporarily unavailable. Please try again later.";
+  }
+  if (
+    /ECONNREFUSED|fetch failed|Failed to fetch|network error|\b502\b|\b503\b|\b504\b|Cannot reach Python/i.test(
+      message
+    )
+  ) {
+    return IS_DEV
+      ? "Scoring service unreachable. Start the Python API on port 8000."
+      : "Scoring is temporarily unavailable. Please try again later.";
+  }
+  if (/Poll failed|Request failed/i.test(message)) {
+    return "Scoring failed. Please try again.";
+  }
+  return message.length > 120 ? `${message.slice(0, 117)}…` : message;
+}
+
+export function needsInterviewContinuation(
+  mode: TestExamMode,
+  recordings: ExamRecordingRef[],
+  plan: MockExamPlan
+): boolean {
+  if (mode !== "full") return false;
+  const scoring = getScoringRecordings(recordings, plan, mode);
+  const lrCount = scoring.filter((r) => r.kind === "listen_repeat").length;
+  const ivCount = scoring.filter((r) => r.kind === "interview").length;
+  return (
+    lrCount >= plan.listenRepeat.length &&
+    ivCount < plan.interviewSession.questions.length
+  );
+}
+
+export function canFinishExam(
+  mode: TestExamMode,
+  recordings: ExamRecordingRef[],
+  plan: MockExamPlan
+): boolean {
+  const scoring = getScoringRecordings(recordings, plan, mode);
+  if (mode === "listen_repeat") {
+    return scoring.length >= plan.listenRepeat.length;
+  }
+  if (mode === "interview") {
+    return scoring.length >= plan.interviewSession.questions.length;
+  }
+  return scoring.length >= getExpectedRecordingCount("full");
+}
+
+export function findResumeIvIndex(
+  recordings: ExamRecordingRef[],
+  plan: MockExamPlan
+): number {
+  for (let i = 0; i < plan.interviewSession.questions.length; i += 1) {
+    const question = plan.interviewSession.questions[i]!;
+    const hasRecording = recordings.some(
+      (r) => r.kind === "interview" && r.questionId === question.id
+    );
+    if (!hasRecording) return i;
+  }
+  return Math.max(0, plan.interviewSession.questions.length - 1);
 }
 
 export const LOW_MIC_QUALITY_HINT =

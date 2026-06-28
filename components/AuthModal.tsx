@@ -32,7 +32,13 @@ function friendlyAuthError(message: string): string {
     return "Please enter a valid email address.";
   }
   if (lower.includes("not configured")) {
-    return "Server login is not configured. Set AUTH_SECRET in .env.local and restart npm run dev.";
+    return "Sign-in is not available on this server yet. The administrator needs to configure the account database.";
+  }
+  if (lower.includes("relation") && lower.includes("does not exist")) {
+    return "Account database is not set up yet. Please try again later.";
+  }
+  if (lower.includes("connect") || lower.includes("econnrefused")) {
+    return "Could not reach the account server. Please try again later.";
   }
   return message;
 }
@@ -232,10 +238,8 @@ export function AuthModal({
 
         {!isAuthClientConfigured() && (
           <p className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Login requires server configuration:{" "}
-            <code className="text-xs">DATABASE_URL</code> and{" "}
-            <code className="text-xs">AUTH_SECRET</code> in{" "}
-            <code className="text-xs">.env.local</code>.
+            Sign-in may be disabled in this build. Contact the site administrator
+            if login fails.
           </p>
         )}
 
@@ -320,7 +324,7 @@ export function AuthModal({
 
           <button
             type="submit"
-            disabled={loading || !isAuthClientConfigured()}
+            disabled={loading}
             className="w-full rounded-full bg-slate-900 py-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading

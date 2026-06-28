@@ -1,4 +1,5 @@
 import { fetchCurrentUser } from "@/lib/auth/client";
+import { formatUploadError } from "@/lib/examRecordings";
 import {
   LOCAL_AUDIO_BUCKET,
   buildAudioStoragePath,
@@ -81,11 +82,13 @@ async function uploadAudioLocal(
   };
 
   if (!response.ok) {
-    throw new Error(`Upload failed: ${payload.error ?? response.statusText}`);
+    throw new Error(
+      formatUploadError(`Upload failed: ${payload.error ?? response.statusText}`)
+    );
   }
 
   if (!payload.audioUrl || !payload.storagePath) {
-    throw new Error("Upload failed: invalid server response.");
+    throw new Error(formatUploadError("Upload failed: invalid server response."));
   }
 
   const audioUrl =
@@ -127,14 +130,7 @@ async function uploadAudioSupabase(
     });
 
   if (uploadError) {
-    const hint =
-      uploadError.message.includes("400") ||
-      /mime|content.?type/i.test(uploadError.message)
-        ? " Check Supabase bucket allowed MIME types (run supabase/storage.sql)."
-        : /policy|row-level|permission|denied/i.test(uploadError.message)
-          ? " Check Storage RLS policies in supabase/storage.sql."
-          : "";
-    throw new Error(`Upload failed: ${uploadError.message}.${hint}`);
+    throw new Error(formatUploadError(`Upload failed: ${uploadError.message}`));
   }
 
   let audioUrl: string;
@@ -146,7 +142,9 @@ async function uploadAudioSupabase(
 
     if (signError || !data?.signedUrl) {
       throw new Error(
-        `Failed to create signed URL: ${signError?.message ?? "Unknown error"}`
+        formatUploadError(
+          `Failed to create signed URL: ${signError?.message ?? "Unknown error"}`
+        )
       );
     }
 
