@@ -2,6 +2,8 @@ import type { BehaviorMetrics } from "@/components/BehaviorMetricsCard";
 import type { FeedbackSection } from "@/components/FeedbackCard";
 import type { InterviewScores } from "@/components/InterviewScoreCard";
 
+export type { BehaviorMetrics };
+
 /** @deprecated Legacy span format — use transcriptSegments */
 export type InterviewTranscriptSpanKind = "grammar" | "improvement" | "strong";
 

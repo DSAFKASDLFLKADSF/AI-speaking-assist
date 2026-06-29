@@ -49,6 +49,7 @@ from whisper_transcribe import (
 )
 from neural_tts import DEFAULT_RATE, DEFAULT_VOICE, synthesize_cached
 from analysis_jobs import AnalysisJob, job_store
+from analysis_timing import StageTimer
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1010,6 +1011,278 @@ async def analyze_interview(
 app.include_router(router)
 app.include_router(jobs_router)
 
+# ---------------------------------------------------------------------------
+# Admin benchmark (per-stage timing)
+# ---------------------------------------------------------------------------
+
+benchmark_router = APIRouter(prefix="/benchmark", tags=["benchmark"])
+
+
+class TimingStage(BaseModel):
+    id: str
+    label: str
+    seconds: float
+
+
+class BenchmarkInterviewItem(BaseModel):
+    audio_url: HttpUrl
+    prompt: str
+    question_id: str | None = None
+    response_seconds: int = Field(default=45, ge=1, le=120)
+    duration_ms: int = Field(default=0, ge=0)
+    title: str = "Interview question"
+
+
+class BenchmarkListenRepeatItem(BaseModel):
+    audio_url: HttpUrl
+    reference_text: str
+    prompt_id: str | None = None
+    title: str = "Listen & Repeat"
+
+
+class BenchmarkRunOneRequest(BaseModel):
+    kind: Literal["interview", "listen_repeat"]
+    interview: BenchmarkInterviewItem | None = None
+    listen_repeat: BenchmarkListenRepeatItem | None = None
+
+
+class BenchmarkRunOneResponse(BaseModel):
+    kind: Literal["interview", "listen_repeat"]
+    title: str
+    success: bool
+    stages: list[TimingStage]
+    total_seconds: float
+    error: str | None = None
+    score_preview: str | None = None
+
+
+async def _run_interview_timed(item: BenchmarkInterviewItem) -> BenchmarkRunOneResponse:
+    timer = StageTimer()
+    body = InterviewRequest(
+        audio_url=item.audio_url,
+        prompt=item.prompt,
+        question_id=item.question_id,
+        response_seconds=item.response_seconds,
+        duration_ms=item.duration_ms,
+    )
+
+    try:
+        audio_bytes, content_type, _file_size = await fetch_audio(str(body.audio_url))
+        timer.mark("fetch_audio", "Download recording audio")
+
+        transcription = await transcribe_audio(
+            audio_bytes, content_type, audio_url=str(body.audio_url)
+        )
+        timer.mark("transcribe", "Speech-to-text (AssemblyAI)")
+
+        transcript = transcription.transcript.strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="Empty transcript.")
+
+        features = await analyze_audio_features(
+            audio_bytes,
+            transcript,
+            whisper_words=transcription.words,
+            content_type=content_type,
+            duration_hint=body.duration_ms / 1000 if body.duration_ms > 0 else None,
+        )
+        timer.mark("audio_features", "Pause / pace / filler analysis")
+
+        score_prompt = get_toefl_score_prompt(
+            task="interview",
+            transcript=transcript,
+            question=body.prompt,
+            prompt_id=body.question_id,
+            response_seconds=body.response_seconds,
+            metrics=features_to_dict(features),
+        )
+        timer.mark("build_prompt", "Build GLM scoring prompt")
+
+        (
+            scores_raw,
+            feedback_raw,
+            score_summary,
+            glm_model,
+            transcript_segments_raw,
+            pace_raw,
+            pronunciation_raw,
+        ) = await score_with_glm(score_prompt)
+        timer.mark("glm_scoring", "AI scoring + feedback (GLM)")
+
+        feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
+        segments = _segments_from_glm(transcript_segments_raw)
+        if not segments and transcript.strip():
+            segments = [
+                TranscriptSegmentFeedback(text=transcript.strip(), has_issue=False)
+            ]
+
+        _ = InterviewResponse(
+            transcript=transcript,
+            transcript_segments=segments,
+            pace_feedback=_delivery_from_dict(pace_raw),
+            pronunciation_feedback=_delivery_from_dict(pronunciation_raw),
+            scores=InterviewScores(
+                topic=scores_raw.get("topic", 1),
+                pace=scores_raw.get("pace", 1),
+                pronunciation=scores_raw.get("pronunciation", 1),
+                grammar=scores_raw.get("grammar", 1),
+            ),
+            score_summary=score_summary,
+            metrics=features_to_metrics(features),
+            feedback=FeedbackBlock(**feedback_raw),
+            model=f"{transcription.model}+{glm_model}",
+        )
+
+        return BenchmarkRunOneResponse(
+            kind="interview",
+            title=item.title,
+            success=True,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            score_preview=score_summary,
+        )
+    except HTTPException as exc:
+        timer.mark("failed", f"Failed: {exc.detail}")
+        return BenchmarkRunOneResponse(
+            kind="interview",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc.detail),
+        )
+    except GlmApiError as exc:
+        timer.mark("failed", "GLM error")
+        return BenchmarkRunOneResponse(
+            kind="interview",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc),
+        )
+    except Exception as exc:
+        logger.exception("Benchmark interview failed")
+        timer.mark("failed", "Unexpected error")
+        return BenchmarkRunOneResponse(
+            kind="interview",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc),
+        )
+
+
+async def _run_listen_repeat_timed(
+    item: BenchmarkListenRepeatItem,
+) -> BenchmarkRunOneResponse:
+    timer = StageTimer()
+
+    try:
+        audio_bytes, content_type, _file_size = await fetch_audio(str(item.audio_url))
+        timer.mark("fetch_audio", "Download recording audio")
+
+        transcription = await transcribe_audio(
+            audio_bytes, content_type, audio_url=str(item.audio_url)
+        )
+        timer.mark("transcribe", "Speech-to-text (AssemblyAI)")
+
+        transcript = transcription.transcript.strip()
+        if not transcript:
+            if not is_transcription_configured():
+                raise HTTPException(status_code=503, detail="Transcription not configured.")
+            raise HTTPException(status_code=422, detail="Empty transcript.")
+
+        features = await analyze_audio_features(
+            audio_bytes,
+            transcript,
+            whisper_words=transcription.words,
+            content_type=content_type,
+        )
+        timer.mark("audio_features", "Pause / pace / filler analysis")
+
+        words_raw = build_word_comparison(item.reference_text, transcript)
+        word_stats = word_stats_from_comparison(words_raw)
+        timer.mark("word_align", "Word alignment vs reference")
+
+        score_prompt = get_toefl_score_prompt(
+            task="listen_repeat",
+            transcript=transcript,
+            reference_text=item.reference_text,
+            prompt_id=item.prompt_id,
+            metrics=features_to_dict(features),
+            word_stats=word_stats,
+        )
+        timer.mark("build_prompt", "Build GLM scoring prompt")
+
+        scores, feedback_raw, score_summary, glm_model, _, _, _ = await score_with_glm(
+            score_prompt
+        )
+        timer.mark("glm_scoring", "AI scoring + feedback (GLM)")
+
+        feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
+        glm_score = scores.get("score", 1)
+        rule_score = compute_listen_repeat_score(words_raw)
+        score = min(glm_score, rule_score)
+
+        return BenchmarkRunOneResponse(
+            kind="listen_repeat",
+            title=item.title,
+            success=True,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            score_preview=f"Score {score}/5 — {score_summary}",
+        )
+    except HTTPException as exc:
+        timer.mark("failed", f"Failed: {exc.detail}")
+        return BenchmarkRunOneResponse(
+            kind="listen_repeat",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc.detail),
+        )
+    except GlmApiError as exc:
+        timer.mark("failed", "GLM error")
+        return BenchmarkRunOneResponse(
+            kind="listen_repeat",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc),
+        )
+    except Exception as exc:
+        logger.exception("Benchmark listen-repeat failed")
+        timer.mark("failed", "Unexpected error")
+        return BenchmarkRunOneResponse(
+            kind="listen_repeat",
+            title=item.title,
+            success=False,
+            stages=[TimingStage(**s) for s in timer.to_list()],
+            total_seconds=timer.total_seconds(),
+            error=str(exc),
+        )
+
+
+@benchmark_router.post("/run-one", response_model=BenchmarkRunOneResponse)
+async def benchmark_run_one(
+    body: BenchmarkRunOneRequest,
+    _: Annotated[None, Depends(verify_api_key)] = None,
+) -> BenchmarkRunOneResponse:
+    if body.kind == "interview":
+        if not body.interview:
+            raise HTTPException(status_code=422, detail="interview item required.")
+        return await _run_interview_timed(body.interview)
+    if not body.listen_repeat:
+        raise HTTPException(status_code=422, detail="listen_repeat item required.")
+    return await _run_listen_repeat_timed(body.listen_repeat)
+
+
+app.include_router(benchmark_router)
+
 tts_router = APIRouter(prefix="/synthesize", tags=["synthesize"])
 
 
@@ -1058,6 +1331,7 @@ def root() -> dict:
             "/jobs/{job_id}",
             "/analyze/listen-repeat",
             "/analyze/interview",
+            "/benchmark/run-one",
             "/synthesize/speech",
             "/health",
         ],

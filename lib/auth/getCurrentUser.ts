@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { isAdminUser } from "@/lib/auth/admins";
 import { findUserById } from "@/lib/repositories/users";
 import type { AppUser } from "@/lib/auth/types";
 import { AUTH_COOKIE_NAME, verifySessionToken } from "@/lib/auth/session";
@@ -30,6 +31,14 @@ export async function requireUser(): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user) {
     throw new AuthError("You must be logged in.");
+  }
+  return user;
+}
+
+export async function requireAdmin(): Promise<AppUser> {
+  const user = await requireUser();
+  if (!isAdminUser(user)) {
+    throw new AuthError("Admin access required.");
   }
   return user;
 }

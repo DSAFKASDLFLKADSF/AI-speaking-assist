@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { isAdminUser } from "@/lib/auth/admins";
+import { useAuthSession } from "@/lib/auth/useAuthSession";
 import { HeaderActions } from "@/components/dashboard/HeaderActions";
 
-const SIDEBAR_ITEMS = [
+const BASE_SIDEBAR_ITEMS = [
   {
     href: "/dashboard",
     label: "Test Library",
@@ -26,7 +28,18 @@ const SIDEBAR_ITEMS = [
   },
 ] as const;
 
+const ADMIN_SIDEBAR_ITEM = {
+  href: "/admin/scoring-benchmark",
+  label: "Scoring benchmark",
+  icon: (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+    </svg>
+  ),
+} as const;
+
 function pageTitleForPath(pathname: string): string {
+  if (pathname.startsWith("/admin/scoring-benchmark")) return "Scoring benchmark";
   if (pathname.startsWith("/growth")) return "Growth";
   if (pathname.startsWith("/test/")) return "Practice Test";
   return "Test Library";
@@ -38,6 +51,11 @@ export interface DashboardShellProps {
 
 export function DashboardShell({ children }: DashboardShellProps) {
   const pathname = usePathname();
+  const { user } = useAuthSession();
+  const isAdmin = Boolean(user && isAdminUser(user));
+  const sidebarItems = isAdmin
+    ? [...BASE_SIDEBAR_ITEMS, ADMIN_SIDEBAR_ITEM]
+    : [...BASE_SIDEBAR_ITEMS];
   const pageTitle = pageTitleForPath(pathname);
 
   const isActive = (href: string) => {
@@ -59,7 +77,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
           T
         </Link>
         <nav className="flex flex-1 flex-col gap-2" aria-label="App sections">
-          {SIDEBAR_ITEMS.map((item) => {
+          {sidebarItems.map((item) => {
             const active = isActive(item.href);
             return (
               <Link

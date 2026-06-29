@@ -304,3 +304,53 @@ export async function callPythonAnalyzeInterview(
     { timeoutMs: Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 300_000) }
   );
 }
+
+export interface PythonBenchmarkStage {
+  id: string;
+  label: string;
+  seconds: number;
+}
+
+export interface PythonBenchmarkRunOneResponse {
+  kind: "interview" | "listen_repeat";
+  title: string;
+  success: boolean;
+  stages: PythonBenchmarkStage[];
+  total_seconds: number;
+  error?: string | null;
+  score_preview?: string | null;
+}
+
+export interface PythonBenchmarkInterviewItem {
+  audio_url: string;
+  prompt: string;
+  question_id?: string;
+  response_seconds?: number;
+  duration_ms?: number;
+  title: string;
+}
+
+export interface PythonBenchmarkListenRepeatItem {
+  audio_url: string;
+  reference_text: string;
+  prompt_id?: string;
+  title: string;
+}
+
+export async function callPythonBenchmarkRunOne(payload: {
+  kind: "interview" | "listen_repeat";
+  interview?: PythonBenchmarkInterviewItem;
+  listen_repeat?: PythonBenchmarkListenRepeatItem;
+}): Promise<PythonBenchmarkRunOneResponse> {
+  return callPythonApi<PythonBenchmarkRunOneResponse>(
+    "/benchmark/run-one",
+    payload,
+    (data) =>
+      Boolean(
+        (data as PythonBenchmarkRunOneResponse).kind &&
+          Array.isArray((data as PythonBenchmarkRunOneResponse).stages)
+      ),
+    "Python benchmark returned an invalid payload.",
+    { timeoutMs: Number(process.env.PYTHON_SPEECH_API_TIMEOUT_MS ?? 300_000) }
+  );
+}
