@@ -54,6 +54,7 @@ class GlmScoreResult:
     feedback: dict[str, Any]
     score_summary: str | None = None
     model: str = DEFAULT_MODEL
+    transcript_review: list[dict[str, str]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -175,6 +176,26 @@ def _clamp_score(value: Any) -> int:
     except (TypeError, ValueError):
         return 1
     return max(1, min(5, num))
+
+
+def _normalize_transcript_review(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, dict):
+        return []
+    spans_raw = raw.get("spans")
+    if not isinstance(spans_raw, list):
+        return []
+    spans: list[dict[str, str]] = []
+    for item in spans_raw:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        kind = str(item.get("kind") or "improvement").strip().lower()
+        if kind not in {"grammar", "improvement", "strong"}:
+            kind = "improvement"
+        note = str(item.get("note") or "").strip()
+        if text:
+            spans.append({"text": text, "kind": kind, "note": note})
+    return spans
 
 
 def _normalize_feedback(raw: Any) -> dict[str, Any]:
@@ -307,6 +328,7 @@ def call_glm(
     scores = _normalize_scores(parsed, task)
     feedback = _normalize_feedback(parsed.get("feedback"))
     score_summary = str(parsed.get("scoreSummary") or feedback.get("summary") or "").strip()
+    transcript_review = _normalize_transcript_review(parsed.get("transcriptReview"))
 
     if not feedback.get("summary") and score_summary:
         feedback = {**feedback, "summary": score_summary}
@@ -318,4 +340,5 @@ def call_glm(
         feedback=feedback,
         score_summary=score_summary or None,
         model=model,
+        transcript_review=transcript_review or None,
     )

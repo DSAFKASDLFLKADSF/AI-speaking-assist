@@ -1,12 +1,14 @@
 "use client";
 
 import { ComparisonText } from "@/components/ComparisonText";
+import { RecordingAudioPlayer } from "@/components/RecordingAudioPlayer";
 import { ScoreCard } from "@/components/ScoreCard";
 import type { AnalyzeSpeechResponse } from "@/lib/analyze-speech-types";
 
 export interface ListenRepeatFeedbackPanelProps {
   original: string;
   analysis: AnalyzeSpeechResponse;
+  audioUrl?: string;
   title?: string;
   defaultOpen?: boolean;
 }
@@ -14,6 +16,7 @@ export interface ListenRepeatFeedbackPanelProps {
 export function ListenRepeatFeedbackPanel({
   original,
   analysis,
+  audioUrl,
   title,
   defaultOpen = false,
 }: ListenRepeatFeedbackPanelProps) {
@@ -27,6 +30,8 @@ export function ListenRepeatFeedbackPanel({
       </summary>
       <div className="space-y-4 border-t border-slate-100 px-5 pb-5 pt-4">
         <ScoreCard score={analysis.score} feedback={analysis.scoreSummary} />
+
+        {audioUrl ? <RecordingAudioPlayer src={audioUrl} /> : null}
 
         <div>
           <h4 className="text-xs font-medium uppercase tracking-wide text-slate-500">

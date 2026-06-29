@@ -8,13 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ExamVisualPanel } from "@/components/ExamVisualPanel";
 
-import { FeedbackCard } from "@/components/FeedbackCard";
-
 import { InterviewQuestionPanel } from "@/components/InterviewQuestionPanel";
-
-import { interviewScoresToBand } from "@/components/InterviewScoreCard";
-
-import { InterviewScoreCard } from "@/components/InterviewScoreCard";
 
 import { ListenRepeatVisualPanel } from "@/components/ListenRepeatVisualPanel";
 
@@ -26,6 +20,7 @@ import { ExamRecordingStrip } from "@/components/exam/ExamRecordingStrip";
 
 import { InterviewHintPanel } from "@/components/exam/InterviewHintPanel";
 
+import { InterviewFeedbackPanel } from "@/components/exam/InterviewFeedbackPanel";
 import { ListenRepeatFeedbackPanel } from "@/components/exam/ListenRepeatFeedbackPanel";
 
 import {
@@ -148,7 +143,9 @@ import {
   ensureMicrophonePermission,
   formatMicrophoneError,
 } from "@/lib/microphone";
+import { fetchCurrentUser } from "@/lib/auth/client";
 import { getInterviewSectionImageUrl } from "@/lib/visualAssets";
+import { buildInterviewSampleAnswer } from "@/lib/interviewSampleAnswer";
 
 
 
@@ -341,6 +338,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+
 
 
   const wantScoringRef = useRef(wantScoring);
@@ -383,7 +382,19 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const prepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const processingRef = useRef(false);
+  const uploadInFlightRef = useRef<Set<string>>(new Set());
+
+  const stopRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const lrIndexRef = useRef(lrIndex);
+
+  lrIndexRef.current = lrIndex;
+
+  const ivIndexRef = useRef(ivIndex);
+
+  ivIndexRef.current = ivIndex;
+
+  const [uploadingRecordingKey, setUploadingRecordingKey] = useState<string | null>(null);
 
   const analysisInFlightRef = useRef(false);
 
@@ -397,6 +408,14 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
   stageRef.current = stage;
 
   const sectionBreakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+
+
+  useEffect(() => {
+
+    void fetchCurrentUser().then((user) => setIsAdmin(Boolean(user?.isAdmin)));
+
+  }, []);
 
 
 
@@ -1215,85 +1234,85 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     async (result: RecordingResult) => {
 
-      if (processingRef.current) return;
-
-      processingRef.current = true;
-
       clearResponseTimer();
 
       setRecordingError(null);
 
 
 
-      const captureStage = stage;
+      const captureStage = stageRef.current;
 
-      const captureLr = currentLrPrompt;
+      const captureLrIdx = lrIndexRef.current;
 
-      const captureIv = currentIvQuestion;
+      const captureIvIdx = ivIndexRef.current;
+
+      const captureLr =
+
+        captureStage === "lr_recording"
+
+          ? plan.listenRepeat[captureLrIdx]
+
+          : undefined;
+
+      const captureIv =
+
+        captureStage === "iv_recording"
+
+          ? plan.interviewSession.questions[captureIvIdx]
+
+          : undefined;
 
       const captureKey =
 
         captureStage === "lr_recording"
 
-          ? `lr-${lrIndex}`
+          ? `lr-${captureLrIdx}`
 
           : captureStage === "iv_recording"
 
-            ? `iv-${ivIndex}`
+            ? `iv-${captureIvIdx}`
 
             : null;
 
 
 
-      try {
+      if (!captureKey || (!captureLr && !captureIv)) {
 
-        const { audioUrl: storedUrl, storagePath, bucket } = await uploadAudioWithMeta(
+        return;
 
-          result.blob,
+      }
 
-          {
+      if (uploadInFlightRef.current.has(captureKey)) {
 
-            allowAnonymous: true,
+        return;
 
-            fileName: `exam-${testId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.webm`,
+      }
 
-          }
+      uploadInFlightRef.current.add(captureKey);
 
-        );
-
-
-
-        URL.revokeObjectURL(result.url);
+      setUploadingRecordingKey(captureKey);
 
 
 
-        const stillOnQuestion =
+      const pendingId = crypto.randomUUID();
 
-          captureKey != null &&
-
-          captureKey === activeRecordingKeyRef.current &&
-
-          stageRef.current === captureStage &&
-
-          (captureStage === "lr_recording"
-
-            ? currentLrPrompt?.id === captureLr?.id
-
-            : currentIvQuestion?.id === captureIv?.id);
+      const provisionalPath = `pending:${pendingId}`;
 
 
 
-        if (!stillOnQuestion) {
+      const buildPending = (
 
-          return;
+        audioUrl: string,
 
-        }
+        storagePath: string,
 
+        bucket?: string
 
+      ): PendingRecording => {
 
         if (captureStage === "lr_recording" && captureLr) {
 
-          const pending: PendingRecording = {
+          return {
 
             kind: "listen_repeat",
 
@@ -1307,7 +1326,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             responseSeconds: getListenRepeatRecordingSeconds(captureLr),
 
-            audioUrl: storedUrl,
+            audioUrl,
 
             storagePath,
 
@@ -1319,91 +1338,117 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
           };
 
+        }
 
+        return {
 
-          setRecordings((prev) => upsertRecording(prev, pending));
+          kind: "interview",
 
-          if (wantScoringRef.current) {
+          questionId: captureIv!.id,
 
-            const cleared = clearPipelineEntry(
+          promptText: captureIv!.prompt,
 
-              partialResultsRef.current,
+          title: captureIv!.taskLabel,
 
-              pending
+          responseSeconds: captureIv!.responseSeconds,
 
-            );
+          audioUrl,
 
-            partialResultsRef.current = cleared;
+          storagePath,
 
-            setPartialResults(cleared);
+          bucket,
 
-            pipelineRef.current?.enqueue(pending);
+          durationMs: result.durationMs,
 
-          }
+          lowMicQuality: result.lowMicQuality,
 
-          setStage("lr_item_complete");
+        };
 
-        } else if (captureStage === "iv_recording" && captureIv) {
-
-          const pending: PendingRecording = {
-
-            kind: "interview",
-
-            questionId: captureIv.id,
-
-            promptText: captureIv.prompt,
-
-            title: captureIv.taskLabel,
-
-            responseSeconds: captureIv.responseSeconds,
-
-            audioUrl: storedUrl,
-
-            storagePath,
-
-            bucket,
-
-            durationMs: result.durationMs,
-
-            lowMicQuality: result.lowMicQuality,
-
-          };
+      };
 
 
 
-          setRecordings((prev) => upsertRecording(prev, pending));
+      const provisional = buildPending(result.url, provisionalPath, "pending");
 
-          if (wantScoringRef.current) {
+      setRecordings((prev) => upsertRecording(prev, provisional));
 
-            const cleared = clearPipelineEntry(
+      if (captureStage === "lr_recording") {
 
-              partialResultsRef.current,
+        setStage("lr_item_complete");
 
-              pending
+      } else if (captureStage === "iv_recording") {
 
-            );
+        setStage("iv_item_complete");
 
-            partialResultsRef.current = cleared;
+      }
 
-            setPartialResults(cleared);
 
-            pipelineRef.current?.enqueue(pending);
 
-          }
+      try {
 
-          setStage("iv_item_complete");
+        const { audioUrl: storedUrl, storagePath, bucket } =
 
-        } else {
+          await uploadAudioWithMeta(result.blob, {
 
-          setRecordingError(
+            allowAnonymous: true,
 
-            "Recording uploaded but could not be matched to the current question. Try again."
+            fileName: `exam-${testId}-${Date.now()}-${pendingId.slice(0, 8)}.webm`,
+
+          });
+
+
+
+        URL.revokeObjectURL(result.url);
+
+
+
+        const final = buildPending(storedUrl, storagePath, bucket);
+
+        setRecordings((prev) => upsertRecording(prev, final));
+
+
+
+        if (wantScoringRef.current) {
+
+          const cleared = clearPipelineEntry(
+
+            partialResultsRef.current,
+
+            final
 
           );
+
+          partialResultsRef.current = cleared;
+
+          setPartialResults(cleared);
+
+          pipelineRef.current?.enqueue(final);
 
         }
 
       } catch (err) {
+
+        URL.revokeObjectURL(result.url);
+
+        setRecordings((prev) =>
+
+          prev.filter((r) => recordingKey(r) !== recordingKey(provisional))
+
+        );
+
+        if (captureStage === "lr_recording") {
+
+          setStage("lr_recording");
+
+        } else if (captureStage === "iv_recording") {
+
+          setStage("iv_recording");
+
+        }
+
+        recordingArmRef.current = null;
+
+
 
         const message = formatUploadError(
 
@@ -1417,13 +1462,15 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       } finally {
 
-        processingRef.current = false;
+        uploadInFlightRef.current.delete(captureKey);
+
+        setUploadingRecordingKey((key) => (key === captureKey ? null : key));
 
       }
 
     },
 
-    [stage, currentLrPrompt, currentIvQuestion, testId, lrIndex, ivIndex, clearResponseTimer]
+    [plan.listenRepeat, plan.interviewSession.questions, testId, clearResponseTimer]
 
   );
 
@@ -1782,11 +1829,31 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
         clearResponseTimer();
 
-        if (recordingStatusRef.current === "recording") {
+        const requestStop = () => {
 
-          setStopSignal((n) => n + 1);
+          if (
+
+            recordingStatusRef.current === "recording" ||
+
+            recordingStatusRef.current === "requesting"
+
+          ) {
+
+            setStopSignal((n) => n + 1);
+
+          }
+
+        };
+
+        requestStop();
+
+        if (stopRetryTimerRef.current) {
+
+          clearTimeout(stopRetryTimerRef.current);
 
         }
+
+        stopRetryTimerRef.current = setTimeout(requestStop, 800);
 
       }
 
@@ -2442,19 +2509,43 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             {stage === "lr_recording" && (
 
-              <section className="rounded-xl border border-slate-200 bg-white p-5 text-center shadow-sm">
+              <section className="space-y-4">
 
-                <p className="text-sm font-semibold text-slate-900">
+                {isAdmin && (
 
-                  Now repeat the prompt.
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
 
-                </p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
 
-                <p className="mt-2 text-xs text-slate-500">
+                      Original sentence — repeat this
 
-                  Speak clearly and match the original as closely as you can.
+                    </p>
 
-                </p>
+                    <p className="mt-2 text-sm leading-relaxed text-slate-900">
+
+                      {currentLrPrompt.transcript}
+
+                    </p>
+
+                  </div>
+
+                )}
+
+                <div className="rounded-xl border border-slate-200 bg-white p-5 text-center shadow-sm">
+
+                  <p className="text-sm font-semibold text-slate-900">
+
+                    Now repeat the prompt aloud.
+
+                  </p>
+
+                  <p className="mt-2 text-xs text-slate-500">
+
+                    Speak clearly and match the original as closely as you can.
+
+                  </p>
+
+                </div>
 
               </section>
 
@@ -2482,6 +2573,12 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             </p>
 
+            {uploadingRecordingKey === `lr-${lrIndex}` && (
+
+              <p className="mt-2 text-xs text-slate-400">Uploading response…</p>
+
+            )}
+
             {wantScoring && backgroundScoringPending > 0 && (
 
               <p className="mt-2 text-xs text-slate-400">
@@ -2500,7 +2597,9 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
               onClick={advanceFromLrItem}
 
-              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white"
+              disabled={uploadingRecordingKey === `lr-${lrIndex}`}
+
+              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
 
             >
 
@@ -2642,25 +2741,49 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
         {stage === "iv_question_listen" && currentIvQuestion && (
 
-          <InterviewQuestionPanel
+          <>
 
-            key={`${currentIvQuestion.id}-${questionAudioKey}`}
+            <InterviewQuestionPanel
 
-            question={currentIvQuestion}
+              key={`${currentIvQuestion.id}-${questionAudioKey}`}
 
-            session={plan.interviewSession}
+              question={currentIvQuestion}
 
-            examMode
+              session={plan.interviewSession}
 
-            showQuestionText={false}
+              examMode
 
-            showExaminerImage
+              showQuestionText={false}
 
-            autoPlayQuestion
+              showExaminerImage
 
-            onQuestionAudioEnded={onIvQuestionEnded}
+              autoPlayQuestion
 
-          />
+              onQuestionAudioEnded={onIvQuestionEnded}
+
+            />
+
+            {isAdmin && (
+
+              <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/60 p-4 shadow-sm">
+
+                <p className="text-xs font-medium uppercase tracking-wide text-violet-700">
+
+                  Example answer (AI sample)
+
+                </p>
+
+                <p className="mt-2 text-sm leading-relaxed text-violet-950">
+
+                  {buildInterviewSampleAnswer(currentIvQuestion)}
+
+                </p>
+
+              </div>
+
+            )}
+
+          </>
 
         )}
 
@@ -2694,6 +2817,26 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             <InterviewHintPanel question={currentIvQuestion} visible={showHint} />
 
+            {isAdmin && (
+
+              <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 shadow-sm">
+
+                <p className="text-xs font-medium uppercase tracking-wide text-violet-700">
+
+                  Example answer (AI sample)
+
+                </p>
+
+                <p className="mt-2 text-sm leading-relaxed text-violet-950">
+
+                  {buildInterviewSampleAnswer(currentIvQuestion)}
+
+                </p>
+
+              </div>
+
+            )}
+
           </section>
 
         )}
@@ -2719,6 +2862,26 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
               </p>
 
             </div>
+
+            {isAdmin && (
+
+              <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 shadow-sm">
+
+                <p className="text-xs font-medium uppercase tracking-wide text-violet-700">
+
+                  Example answer (AI sample)
+
+                </p>
+
+                <p className="mt-2 text-sm leading-relaxed text-violet-950">
+
+                  {buildInterviewSampleAnswer(currentIvQuestion)}
+
+                </p>
+
+              </div>
+
+            )}
 
             <InterviewHintPanel question={currentIvQuestion} visible={showHint} />
 
@@ -2746,6 +2909,12 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
             </p>
 
+            {uploadingRecordingKey === `iv-${ivIndex}` && (
+
+              <p className="mt-2 text-xs text-slate-400">Uploading response…</p>
+
+            )}
+
             {wantScoring && backgroundScoringPending > 0 && (
 
               <p className="mt-2 text-xs text-slate-400">
@@ -2764,7 +2933,9 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
               onClick={advanceFromIvItem}
 
-              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white"
+              disabled={uploadingRecordingKey === `iv-${ivIndex}`}
+
+              className="mt-6 w-full rounded-lg bg-[#1e3a5f] py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
 
             >
 
@@ -3214,6 +3385,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                         analysis={analysis}
 
+                        audioUrl={pending.audioUrl}
+
                         title={`Question ${i + 1} — detailed feedback`}
 
                       />
@@ -3264,87 +3437,49 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
                 {results.interview.map(({ pending, analysis }) => (
 
-                  <details
+                  <div key={pending.questionId}>
 
-                    key={pending.questionId}
+                    <p className="mb-2 text-xs text-slate-500">{pending.title}</p>
 
-                    className="rounded-xl border border-slate-200 bg-white shadow-sm"
+                    {analysis ? (
 
-                  >
+                      <InterviewFeedbackPanel
 
-                    <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-slate-900 [&::-webkit-details-marker]:hidden">
+                        question={pending.promptText}
 
-                      {pending.title}
+                        analysis={analysis}
 
-                      {analysis && (
+                        audioUrl={pending.audioUrl}
 
-                        <span className="ml-2 text-slate-500">
+                        title={`${pending.title} — detailed feedback`}
 
-                          · {formatSpeakingBand(interviewScoresToBand(analysis.scores))}/{SPEAKING_BAND_MAX}
+                      />
 
-                        </span>
+                    ) : (
 
-                      )}
+                      <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
 
-                    </summary>
+                        {(() => {
 
-                    <div className="border-t border-slate-100 px-5 pb-5 pt-4">
+                          const row = partialResults.interview.find(
 
-                      <p className="text-sm text-slate-700">{pending.promptText}</p>
+                            (r) => r.pending.questionId === pending.questionId
 
-                      {analysis ? (
+                          );
 
-                        <>
+                          return row?.error
 
-                          <InterviewScoreCard
+                            ? formatAnalysisError(row.error)
 
-                            scores={analysis.scores}
+                            : "Recording saved (no score yet).";
 
-                            feedback={analysis.scoreSummary}
+                        })()}
 
-                            className="mt-3"
+                      </p>
 
-                          />
+                    )}
 
-                          <FeedbackCard
-
-                            summary={analysis.feedback.summary}
-
-                            sections={analysis.feedback.sections}
-
-                            className="mt-4"
-
-                          />
-
-                        </>
-
-                      ) : (
-
-                        <p className="mt-3 text-sm text-slate-500">
-
-                          {(() => {
-
-                            const row = partialResults.interview.find(
-
-                              (r) => r.pending.questionId === pending.questionId
-
-                            );
-
-                            return row?.error
-
-                              ? formatAnalysisError(row.error)
-
-                              : "Recording saved (no score yet).";
-
-                          })()}
-
-                        </p>
-
-                      )}
-
-                    </div>
-
-                  </details>
+                  </div>
 
                 ))}
 

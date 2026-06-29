@@ -210,8 +210,15 @@ class BehaviorMetrics(BaseModel):
     longest_pause_seconds: float = Field(ge=0)
 
 
+class TranscriptReviewSpan(BaseModel):
+    text: str
+    kind: Literal["grammar", "improvement", "strong"]
+    note: str = ""
+
+
 class InterviewResponse(BaseModel):
     transcript: str
+    transcript_review: list[TranscriptReviewSpan] = Field(default_factory=list)
     scores: InterviewScores
     score_summary: str
     metrics: BehaviorMetrics
@@ -494,7 +501,7 @@ def resolve_glm_api_key() -> str:
     return key
 
 
-async def score_with_glm(prompt: ToeflScorePrompt) -> tuple[dict, dict, str, str]:
+async def score_with_glm(prompt: ToeflScorePrompt) -> tuple[dict, dict, str, str, list[dict[str, str]]]:
     logger.info(
         "Zhipu GLM scoring task=%s model=%s base_url=%s",
         prompt.task,
@@ -514,7 +521,13 @@ async def score_with_glm(prompt: ToeflScorePrompt) -> tuple[dict, dict, str, str
 
     score_summary = result.score_summary or result.feedback.get("summary") or ""
     logger.info("Zhipu GLM scoring done task=%s scores=%s", prompt.task, result.scores)
-    return result.scores, result.feedback, score_summary, result.model
+    return (
+        result.scores,
+        result.feedback,
+        score_summary,
+        result.model,
+        result.transcript_review or [],
+    )
 
 
 def listen_repeat_to_ets(score: int) -> tuple[float, float, float]:
@@ -623,7 +636,7 @@ async def run_listen_repeat_analysis(body: ListenRepeatRequest) -> ListenRepeatR
         logger.warning("Invalid listen-repeat scoring prompt: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    scores, feedback_raw, score_summary, glm_model = await score_with_glm(score_prompt)
+    scores, feedback_raw, score_summary, glm_model, _transcript_review = await score_with_glm(score_prompt)
     feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
     glm_score = scores.get("score", 1)
     rule_score = compute_listen_repeat_score(words_raw)
@@ -723,13 +736,33 @@ async def run_interview_analysis(body: InterviewRequest) -> InterviewResponse:
         logger.warning("Invalid interview scoring prompt: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    scores_raw, feedback_raw, score_summary, glm_model = await score_with_glm(
+    scores_raw, feedback_raw, score_summary, glm_model, transcript_review = await score_with_glm(
         score_prompt
     )
     feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
 
+    review_spans: list[TranscriptReviewSpan] = []
+    for s in transcript_review:
+        text = str(s.get("text") or "").strip()
+        if not text:
+            continue
+        kind_raw = str(s.get("kind") or "improvement")
+        kind: Literal["grammar", "improvement", "strong"] = (
+            kind_raw
+            if kind_raw in ("grammar", "improvement", "strong")
+            else "improvement"
+        )
+        review_spans.append(
+            TranscriptReviewSpan(
+                text=text,
+                kind=kind,
+                note=str(s.get("note") or ""),
+            )
+        )
+
     return InterviewResponse(
         transcript=transcript,
+        transcript_review=review_spans,
         scores=InterviewScores(
             topic=scores_raw.get("topic", 1),
             pace=scores_raw.get("pace", 1),

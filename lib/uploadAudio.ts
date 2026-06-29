@@ -12,6 +12,25 @@ export const AUDIO_BUCKET =
   process.env.NEXT_PUBLIC_SUPABASE_AUDIO_BUCKET ?? "audio-responses";
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const DEFAULT_UPLOAD_TIMEOUT_MS = 45_000;
+
+async function withUploadTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error("Upload timed out. Please try again.")),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 export interface UploadAudioOptions {
   userId?: string;
@@ -22,6 +41,8 @@ export interface UploadAudioOptions {
   signed?: boolean;
   /** Allow upload to anonymous/ prefix when user is not logged in */
   allowAnonymous?: boolean;
+  /** Abort upload after this many ms (default 45s). */
+  timeoutMs?: number;
 }
 
 export interface UploadAudioResult {
@@ -182,18 +203,24 @@ export async function uploadAudioWithMeta(
     );
   }
 
-  if (preferLocalAudioStorage() || !isSupabaseConfigured()) {
-    return uploadAudioLocal(blob, options);
-  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
 
-  try {
-    return await uploadAudioSupabase(blob, options);
-  } catch (err) {
-    if (isNetworkUploadError(err)) {
+  const run = async (): Promise<UploadAudioResult> => {
+    if (preferLocalAudioStorage() || !isSupabaseConfigured()) {
       return uploadAudioLocal(blob, options);
     }
-    throw err;
-  }
+
+    try {
+      return await uploadAudioSupabase(blob, options);
+    } catch (err) {
+      if (isNetworkUploadError(err)) {
+        return uploadAudioLocal(blob, options);
+      }
+      throw err;
+    }
+  };
+
+  return withUploadTimeout(run(), timeoutMs);
 }
 
 /** Refresh a signed playback URL before sending audio to the Python API. */

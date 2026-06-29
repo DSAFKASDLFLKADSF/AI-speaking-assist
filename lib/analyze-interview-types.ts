@@ -2,6 +2,14 @@ import type { BehaviorMetrics } from "@/components/BehaviorMetricsCard";
 import type { FeedbackSection } from "@/components/FeedbackCard";
 import type { InterviewScores } from "@/components/InterviewScoreCard";
 
+export type InterviewTranscriptSpanKind = "grammar" | "improvement" | "strong";
+
+export interface InterviewTranscriptSpan {
+  text: string;
+  kind: InterviewTranscriptSpanKind;
+  note: string;
+}
+
 export interface AnalyzeInterviewRequest {
   audioUrl: string;
   storagePath: string;
@@ -13,6 +21,7 @@ export interface AnalyzeInterviewRequest {
 
 export interface AnalyzeInterviewResponse {
   transcript: string;
+  transcriptReview?: InterviewTranscriptSpan[];
   scores: InterviewScores;
   scoreSummary: string;
   metrics: BehaviorMetrics;

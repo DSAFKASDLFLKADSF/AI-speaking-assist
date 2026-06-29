@@ -46,6 +46,7 @@ const DEV_SCHEMA_STATEMENTS = [
     avatar_url TEXT,
     native_language TEXT NOT NULL DEFAULT 'zh-CN',
     target_score SMALLINT NOT NULL DEFAULT 24,
+    is_admin BOOLEAN NOT NULL DEFAULT false,
     current_level TEXT,
     timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

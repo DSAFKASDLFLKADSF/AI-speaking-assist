@@ -1,10 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthModal } from "@/components/AuthModal";
+import { fetchCurrentUser } from "@/lib/auth/client";
+import type { PublicUser } from "@/lib/auth/types";
 
 export function HomeLoginPrompt() {
   const [open, setOpen] = useState(false);
+  const [user, setUser] = useState<PublicUser | null | undefined>(undefined);
+
+  useEffect(() => {
+    void fetchCurrentUser().then(setUser);
+  }, []);
+
+  if (user === undefined) {
+    return null;
+  }
+
+  if (user) {
+    return null;
+  }
 
   return (
     <>
@@ -20,7 +35,14 @@ export function HomeLoginPrompt() {
         to track your progress and scores.
       </p>
 
-      <AuthModal open={open} onClose={() => setOpen(false)} defaultMode="login" />
+      <AuthModal
+        open={open}
+        onClose={() => setOpen(false)}
+        defaultMode="login"
+        onSuccess={() => {
+          void fetchCurrentUser().then(setUser);
+        }}
+      />
     </>
   );
 }

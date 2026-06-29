@@ -51,6 +51,11 @@ export async function finalizeInterviewAnalysis(
 
   return {
     transcript: pythonResult.transcript,
+    transcriptReview: (pythonResult.transcript_review ?? []).map((span) => ({
+      text: span.text,
+      kind: span.kind,
+      note: span.note ?? "",
+    })),
     scores: pythonResult.scores,
     scoreSummary: pythonResult.score_summary,
     metrics: {

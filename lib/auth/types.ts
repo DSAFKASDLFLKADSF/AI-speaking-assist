@@ -5,6 +5,7 @@ export interface AppUser {
   avatarUrl: string | null;
   nativeLanguage: string;
   targetScore: number;
+  isAdmin: boolean;
   createdAt: string;
 }
 
@@ -13,6 +14,7 @@ export interface PublicUser {
   email: string;
   displayName: string | null;
   avatarUrl: string | null;
+  isAdmin: boolean;
 }
 
 export function toPublicUser(user: AppUser): PublicUser {
@@ -21,5 +23,6 @@ export function toPublicUser(user: AppUser): PublicUser {
     email: user.email,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
+    isAdmin: user.isAdmin,
   };
 }

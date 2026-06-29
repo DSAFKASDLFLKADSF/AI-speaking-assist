@@ -50,6 +50,11 @@ export interface PythonBehaviorMetrics {
 
 export interface PythonAnalyzeInterviewResponse {
   transcript: string;
+  transcript_review?: Array<{
+    text: string;
+    kind: "grammar" | "improvement" | "strong";
+    note?: string;
+  }>;
   scores: InterviewScores;
   score_summary: string;
   metrics: PythonBehaviorMetrics;

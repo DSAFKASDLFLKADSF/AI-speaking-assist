@@ -5,6 +5,7 @@ import {
   InterviewScoreCard,
   interviewScoresToBand,
 } from "@/components/InterviewScoreCard";
+import { InterviewFeedbackPanel } from "@/components/exam/InterviewFeedbackPanel";
 import { ListenRepeatFeedbackPanel } from "@/components/exam/ListenRepeatFeedbackPanel";
 import {
   type LocalHistoryEntry,
@@ -60,25 +61,11 @@ function InterviewHistoryItem({ item }: { item: LocalInterviewDetail }) {
 
   if (item.analysis) {
     return (
-      <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-slate-900 [&::-webkit-details-marker]:hidden">
-          {label}
-          <span className="ml-2 text-slate-500">· {formatSpeakingBand(avgBand)}/{SPEAKING_BAND_MAX}</span>
-        </summary>
-        <div className="border-t border-slate-100 px-5 pb-5 pt-4">
-          <p className="text-sm text-slate-700">{prompt}</p>
-          <InterviewScoreCard
-            scores={item.analysis.scores}
-            feedback={item.analysis.scoreSummary}
-            className="mt-3"
-          />
-          <FeedbackCard
-            summary={item.analysis.feedback.summary}
-            sections={item.analysis.feedback.sections}
-            className="mt-4"
-          />
-        </div>
-      </details>
+      <InterviewFeedbackPanel
+        question={prompt}
+        analysis={item.analysis}
+        title={`${label} — ${formatSpeakingBand(avgBand)}/${SPEAKING_BAND_MAX}`}
+      />
     );
   }
 

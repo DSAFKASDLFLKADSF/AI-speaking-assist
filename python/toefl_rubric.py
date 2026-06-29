@@ -26,6 +26,15 @@ INTERVIEW_JSON_SCHEMA = {
     "pronunciation": "integer 1-5",
     "grammar": "integer 1-5",
     "scoreSummary": "string, one sentence",
+    "transcriptReview": {
+        "spans": [
+            {
+                "text": "exact phrase copied from the transcript",
+                "kind": "grammar | improvement | strong",
+                "note": "brief note — for grammar/improvement include a corrected or better phrase",
+            }
+        ],
+    },
     "feedback": {
         "summary": "string, one sentence",
         "sections": [
@@ -107,7 +116,8 @@ Use provided metrics (WPM, pause_count, longest_pause, filler_count) as evidence
 2. Empty or near-empty transcript → all dimensions **1**.
 3. Do not reward memorized templates without addressing the question.
 4. Be consistent and strict; average responses cluster around **3**, strong around **4–5**, weak **1–2**.
-5. Return **valid JSON only**, matching the required schema exactly. No markdown, no extra keys."""
+5. Return **valid JSON only**, matching the required schema exactly. No markdown, no extra keys.
+6. In `transcriptReview.spans`, quote **exact substrings** from the transcript (3–8 spans). Mark grammar errors, places to improve wording/development, and 1–2 strong phrases."""
 
 
 def _listen_repeat_system_prompt() -> str:

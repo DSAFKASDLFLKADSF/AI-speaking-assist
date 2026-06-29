@@ -30,11 +30,21 @@ export function ExamRecordingStrip({
   micStream,
 }: ExamRecordingStripProps) {
   const isRecording = recordingStatus === "recording";
+  const isFinishing =
+    timeLeft <= 0 &&
+    (recordingStatus === "processing" || recordingStatus === "requesting");
   const warn = timeLeft <= warningThreshold && timeLeft > 0;
   const progress =
     totalSeconds > 0
-      ? Math.min(100, ((totalSeconds - timeLeft) / totalSeconds) * 100)
+      ? Math.min(
+          100,
+          isFinishing
+            ? 100
+            : ((totalSeconds - timeLeft) / totalSeconds) * 100
+        )
       : 0;
+
+  const displayTime = isFinishing ? "Saving…" : formatTime(timeLeft);
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-4px_24px_rgba(15,23,42,0.08)] backdrop-blur sm:px-6">
@@ -46,11 +56,15 @@ export function ExamRecordingStrip({
             </p>
             <p
               className={`font-mono text-3xl font-semibold tabular-nums ${
-                warn ? "text-red-600" : "text-slate-900"
+                isFinishing
+                  ? "text-base text-slate-600"
+                  : warn
+                    ? "text-red-600"
+                    : "text-slate-900"
               }`}
               aria-live="polite"
             >
-              {formatTime(timeLeft)}
+              {displayTime}
             </p>
             {sublabel && (
               <p className="mt-0.5 text-[10px] text-slate-400">{sublabel}</p>
@@ -80,9 +94,11 @@ export function ExamRecordingStrip({
                     ))
                   : (
                       <span className="text-xs text-slate-400">
-                        {recordingStatus === "requesting"
-                          ? "Starting microphone…"
-                          : "Ready to record"}
+                        {isFinishing
+                          ? "Saving response…"
+                          : recordingStatus === "requesting"
+                            ? "Starting microphone…"
+                            : "Ready to record"}
                       </span>
                     )}
               </div>
