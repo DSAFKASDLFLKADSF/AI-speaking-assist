@@ -7,6 +7,7 @@ import {
   fetchCurrentUser,
   logout,
 } from "@/lib/auth/client";
+import { subscribeAuthSessionChanged } from "@/lib/auth/sessionEvents";
 import type { PublicUser } from "@/lib/auth/types";
 
 const navLinks = [
@@ -31,6 +32,9 @@ export function Navbar() {
 
   useEffect(() => {
     void refreshUser();
+    return subscribeAuthSessionChanged(() => {
+      void refreshUser();
+    });
   }, [refreshUser]);
 
   const openAuth = useCallback((mode: AuthMode) => {

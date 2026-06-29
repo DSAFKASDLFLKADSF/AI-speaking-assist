@@ -13,8 +13,7 @@ import {
   WeeklyTrendChart,
 } from "@/components/growth/GrowthVisuals";
 import { getPracticeHistory } from "@/lib/api";
-import { fetchCurrentUser } from "@/lib/auth/client";
-import type { PublicUser } from "@/lib/auth/types";
+import { useAuthSession } from "@/lib/auth/useAuthSession";
 import { computeGrowthSummary, type GrowthSummary } from "@/lib/growthStats";
 import {
   formatSpeakingBand,
@@ -25,32 +24,18 @@ import {
 
 export default function GrowthPage() {
 
+  const { user, ready, userId } = useAuthSession();
   const [summary, setSummary] = useState<GrowthSummary | null>(null);
-
   const [loading, setLoading] = useState(true);
 
-  const [user, setUser] = useState<PublicUser | null>(null);
-
-
-
   const load = useCallback(async () => {
-
     setLoading(true);
 
-
-
     let cloudItems: Awaited<
-
       ReturnType<typeof getPracticeHistory>
-
     >["items"] = [];
 
-
-
-    const currentUser = await fetchCurrentUser();
-    setUser(currentUser);
-
-    if (currentUser) {
+    if (user) {
       try {
         const data = await getPracticeHistory({ limit: 100 });
         cloudItems = data.items;
@@ -59,25 +44,16 @@ export default function GrowthPage() {
       }
     }
 
-
-
-    setSummary(computeGrowthSummary(cloudItems));
-
+    setSummary(computeGrowthSummary(cloudItems, userId));
     setLoading(false);
-
-  }, []);
-
-
+  }, [user, userId]);
 
   useEffect(() => {
-
+    if (!ready) return;
     void load();
+  }, [ready, load]);
 
-  }, [load]);
-
-
-
-  if (loading || !summary) {
+  if (!ready || loading || !summary) {
 
     return (
 
@@ -135,9 +111,9 @@ export default function GrowthPage() {
 
           <p className="mt-1 text-sm text-slate-600">
 
-            Combined view on this device
-
-            {user ? " plus cloud history" : ""}
+            {user
+              ? "Your account history on this device"
+              : "Sign in to see your saved progress"}
 
           </p>
 

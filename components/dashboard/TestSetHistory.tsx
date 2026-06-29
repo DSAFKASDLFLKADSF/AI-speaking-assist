@@ -2,13 +2,13 @@
 
 import { HistoryEntryDetail } from "@/components/dashboard/HistoryEntryDetail";
 import { getPracticeHistory } from "@/lib/api";
-import { fetchCurrentUser } from "@/lib/auth/client";
+import { useAuthSession } from "@/lib/auth/useAuthSession";
 import { getInterviewSessionForOfficialSet } from "@/lib/interviewPrompts";
 import type { LocalHistoryEntry } from "@/lib/localHistory";
 import { getHistoryForTestSet } from "@/lib/localHistory";
 import { getPromptsBySetId } from "@/lib/prompts";
 import { getOfficialSetIdForTest } from "@/lib/testLibrary/mockTestSets";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export interface TestSetHistoryProps {
   testSetId: string;
@@ -64,78 +64,68 @@ function buildPromptTextSet(testSetId: string): Set<string> {
 }
 
 export function TestSetHistory({ testSetId }: TestSetHistoryProps) {
+  const { user, ready, userId } = useAuthSession();
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loggedIn, setLoggedIn] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async () => {
+    setLoading(true);
+    const local = getHistoryForTestSet(testSetId, userId).map(
+      (entry): HistoryRow => ({ kind: "local", entry })
+    );
 
-    async function load() {
-      setLoading(true);
-      const local = getHistoryForTestSet(testSetId).map(
-        (entry): HistoryRow => ({ kind: "local", entry })
-      );
+    const merged: HistoryRow[] = [...local];
 
-      const user = await fetchCurrentUser();
-      if (cancelled) return;
-      setLoggedIn(Boolean(user));
-
-      const merged: HistoryRow[] = [...local];
-
-      if (user) {
-        const promptTexts = buildPromptTextSet(testSetId);
-        try {
-          const data = await getPracticeHistory({ limit: 100 });
-          for (const item of data.items) {
-            const text = item.session.promptText.trim().toLowerCase();
-            if (promptTexts.size > 0 && !promptTexts.has(text)) continue;
-            merged.push({
-              kind: "cloud",
-              id: item.session.id,
-              createdAt: item.session.createdAt,
-              title: cloudTitle(item.session.promptText),
-              summary:
-                item.score?.overallFeedback ??
-                "Practice saved to your account",
-              scaledScore: item.score?.scaledScore ?? undefined,
-            });
-          }
-        } catch {
-          // Cloud history optional when server DB unavailable
+    if (user) {
+      const promptTexts = buildPromptTextSet(testSetId);
+      try {
+        const data = await getPracticeHistory({ limit: 100 });
+        for (const item of data.items) {
+          const text = item.session.promptText.trim().toLowerCase();
+          if (promptTexts.size > 0 && !promptTexts.has(text)) continue;
+          merged.push({
+            kind: "cloud",
+            id: item.session.id,
+            createdAt: item.session.createdAt,
+            title: cloudTitle(item.session.promptText),
+            summary:
+              item.score?.overallFeedback ??
+              "Practice saved to your account",
+            scaledScore: item.score?.scaledScore ?? undefined,
+          });
         }
-      }
-
-      merged.sort(
-        (a, b) =>
-          new Date(
-            b.kind === "local" ? b.entry.createdAt : b.createdAt
-          ).getTime() -
-          new Date(
-            a.kind === "local" ? a.entry.createdAt : a.createdAt
-          ).getTime()
-      );
-
-      if (!cancelled) {
-        setRows(merged);
-        setLoading(false);
+      } catch {
+        // Cloud history optional when server DB unavailable
       }
     }
 
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [testSetId]);
+    merged.sort(
+      (a, b) =>
+        new Date(
+          b.kind === "local" ? b.entry.createdAt : b.createdAt
+        ).getTime() -
+        new Date(
+          a.kind === "local" ? a.entry.createdAt : a.createdAt
+        ).getTime()
+    );
 
-  if (loading) {
+    setRows(merged);
+    setLoading(false);
+  }, [testSetId, user, userId]);
+
+  useEffect(() => {
+    if (!ready) return;
+    void load();
+  }, [ready, load]);
+
+  if (!ready || loading) {
     return <p className="text-sm text-slate-500">Loading history…</p>;
   }
 
   if (rows.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        {loggedIn
+        {user
           ? "No attempts for this set yet. Complete a practice session while signed in to save it here."
           : "No attempts saved for this set yet. Sign in to save progress to your account."}
       </p>

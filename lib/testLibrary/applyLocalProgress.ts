@@ -7,11 +7,11 @@ import { averageScores, normalizeScore } from "@/lib/testLibrary/scores";
 import type { TestQuestionProgress, TestSet } from "@/lib/testLibrary/types";
 
 /** Latest score per prompt / question id from device practice history. */
-function buildScoreMaps(testSetId?: string) {
+function buildScoreMaps(testSetId: string | undefined, viewerUserId: string | null) {
   const lr = new Map<string, { score: number; at: string }>();
   const iv = new Map<string, { score: number; at: string }>();
 
-  for (const entry of getLocalHistory()) {
+  for (const entry of getLocalHistory(viewerUserId)) {
     if (
       testSetId &&
       entry.testSetId &&
@@ -86,11 +86,14 @@ function applyScoresToQuestions(
   return updated;
 }
 
-export function applyLocalProgressToTestSets(sets: TestSet[]): TestSet[] {
+export function applyLocalProgressToTestSets(
+  sets: TestSet[],
+  viewerUserId: string | null = null
+): TestSet[] {
   if (typeof window === "undefined") return sets;
 
   return sets.map((set) => {
-    const { lr, iv } = buildScoreMaps(set.id);
+    const { lr, iv } = buildScoreMaps(set.id, viewerUserId);
     let latestAt: string | null = null;
 
     const listenRepeatQuestions = applyScoresToQuestions(
@@ -139,14 +142,19 @@ export function applyLocalProgressToTestSets(sets: TestSet[]): TestSet[] {
   });
 }
 
-export function getTestSetWithProgress(id: string): TestSet | undefined {
+export function getTestSetWithProgress(
+  id: string,
+  viewerUserId: string | null = null
+): TestSet | undefined {
   const base = getTestSetById(id);
   if (!base) return undefined;
   if (typeof window === "undefined") return base;
-  return applyLocalProgressToTestSets([base])[0];
+  return applyLocalProgressToTestSets([base], viewerUserId)[0];
 }
 
-export function getAllTestSetsWithProgress(): TestSet[] {
+export function getAllTestSetsWithProgress(
+  viewerUserId: string | null = null
+): TestSet[] {
   if (typeof window === "undefined") return MOCK_TEST_SETS;
-  return applyLocalProgressToTestSets(MOCK_TEST_SETS);
+  return applyLocalProgressToTestSets(MOCK_TEST_SETS, viewerUserId);
 }

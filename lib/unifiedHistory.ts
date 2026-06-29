@@ -88,9 +88,10 @@ function mapLocalItem(entry: LocalHistoryEntry): UnifiedHistoryItem {
 }
 
 export function mergeUnifiedHistory(
-  cloudItems: PracticeHistoryItem[] = []
+  cloudItems: PracticeHistoryItem[] = [],
+  viewerUserId: string | null = null
 ): UnifiedHistoryItem[] {
-  const local = getLocalHistory().map(mapLocalItem);
+  const local = getLocalHistory(viewerUserId).map(mapLocalItem);
   const cloud = cloudItems.map(mapCloudItem);
 
   const seen = new Set<string>();

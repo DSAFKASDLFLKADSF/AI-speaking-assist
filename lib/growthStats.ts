@@ -171,9 +171,10 @@ function dimensionLevel(avgBand: number): DimensionInsight["level"] {
 }
 
 export function computeGrowthSummary(
-  cloudItems: PracticeHistoryItem[] = []
+  cloudItems: PracticeHistoryItem[] = [],
+  viewerUserId: string | null = null
 ): GrowthSummary {
-  const items = mergeUnifiedHistory(cloudItems);
+  const items = mergeUnifiedHistory(cloudItems, viewerUserId);
 
   const listenRepeatScores = items
     .filter((i) => i.mode === "listen_repeat")

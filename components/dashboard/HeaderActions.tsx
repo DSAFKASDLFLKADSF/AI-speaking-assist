@@ -7,6 +7,7 @@ import { getLocalHistory } from "@/lib/localHistory";
 import { MOCK_TEST_SETS } from "@/lib/testLibrary";
 import type { PublicUser } from "@/lib/auth/types";
 import { fetchCurrentUser, logout } from "@/lib/auth/client";
+import { subscribeAuthSessionChanged } from "@/lib/auth/sessionEvents";
 
 type Panel = "search" | "notifications" | "account" | null;
 
@@ -35,9 +36,9 @@ function useClickOutside(
   }, [ref, onOutside, enabled]);
 }
 
-function buildNotifications(): NotificationItem[] {
+function buildNotifications(viewerUserId: string | null): NotificationItem[] {
   const items: NotificationItem[] = [];
-  const history = getLocalHistory();
+  const history = getLocalHistory(viewerUserId);
 
   if (history.length === 0) {
     items.push({
@@ -131,13 +132,16 @@ export function HeaderActions() {
 
   useEffect(() => {
     void fetchCurrentUser().then(setUser);
+    return subscribeAuthSessionChanged(() => {
+      void fetchCurrentUser().then(setUser);
+    });
   }, []);
 
   useEffect(() => {
     if (panel === "notifications") {
-      setNotifications(buildNotifications());
+      setNotifications(buildNotifications(user?.id ?? null));
     }
-  }, [panel]);
+  }, [panel, user]);
 
   const openAuth = (mode: AuthMode) => {
     setAuthMode(mode);

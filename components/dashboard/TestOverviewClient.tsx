@@ -11,6 +11,7 @@ import type { TestExamMode } from "@/lib/localHistory";
 import { applyLocalProgressToTestSets } from "@/lib/testLibrary/applyLocalProgress";
 import { getTestSetById } from "@/lib/testLibrary";
 import type { TestSet } from "@/lib/testLibrary/types";
+import { useAuthSession } from "@/lib/auth/useAuthSession";
 import { useEffect, useState } from "react";
 
 const RUN_MODE_HREF: Record<TestExamMode, string> = {
@@ -26,6 +27,7 @@ const RUN_MODE_LABEL: Record<TestExamMode, string> = {
 };
 
 export function TestOverviewClient({ testId }: { testId: string }) {
+  const { ready, userId } = useAuthSession();
   const [testSet, setTestSet] = useState<TestSet | undefined>(() =>
     getTestSetById(testId)
   );
@@ -34,9 +36,10 @@ export function TestOverviewClient({ testId }: { testId: string }) {
   >([]);
 
   useEffect(() => {
+    if (!ready) return;
     const base = getTestSetById(testId);
     if (base) {
-      setTestSet(applyLocalProgressToTestSets([base])[0]);
+      setTestSet(applyLocalProgressToTestSets([base], userId)[0]);
     }
 
     const modes: TestExamMode[] = ["full", "listen_repeat", "interview"];
@@ -56,7 +59,7 @@ export function TestOverviewClient({ testId }: { testId: string }) {
         })
         .filter((item): item is NonNullable<typeof item> => item != null)
     );
-  }, [testId]);
+  }, [testId, ready, userId]);
 
   if (!testSet) return null;
 

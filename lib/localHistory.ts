@@ -56,6 +56,8 @@ export interface LocalHistoryEntry {
   createdAt: string;
   title: string;
   summary: string;
+  /** Set when saved while signed in — hidden from other accounts / after logout. */
+  userId?: string;
   testSetId?: string;
   examMode?: TestExamMode;
   promptId?: string;
@@ -93,12 +95,54 @@ function writeAll(entries: LocalHistoryEntry[]): void {
   );
 }
 
+/** Who may see a stored entry in the UI. */
+export function isLocalHistoryVisibleTo(
+  entry: LocalHistoryEntry,
+  viewerUserId: string | null
+): boolean {
+  if (!entry.userId) {
+    return viewerUserId == null;
+  }
+  return viewerUserId != null && entry.userId === viewerUserId;
+}
+
+/** Assign device-only entries to the account that just signed in. */
+export function claimLegacyLocalHistory(userId: string): void {
+  const all = readAll();
+  let changed = false;
+  const next = all.map((entry) => {
+    if (entry.userId) return entry;
+    changed = true;
+    return { ...entry, userId };
+  });
+  if (changed) writeAll(next);
+}
+
+/** Tag untagged entries to the signing-out account so they don't leak to guest view. */
+export function sealLocalHistoryOnLogout(userId: string): void {
+  const all = readAll();
+  let changed = false;
+  const next = all.map((entry) => {
+    if (entry.userId) return entry;
+    changed = true;
+    return { ...entry, userId };
+  });
+  if (changed) writeAll(next);
+}
+
+function filterForViewer(
+  entries: LocalHistoryEntry[],
+  viewerUserId: string | null
+): LocalHistoryEntry[] {
+  return entries.filter((entry) => isLocalHistoryVisibleTo(entry, viewerUserId));
+}
+
 function newId(): string {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function getLocalHistory(): LocalHistoryEntry[] {
-  return readAll().sort(
+export function getLocalHistory(viewerUserId: string | null = null): LocalHistoryEntry[] {
+  return filterForViewer(readAll(), viewerUserId).sort(
     (a, b) =>
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -108,6 +152,7 @@ export function addLocalHistoryEntry(
   entry: Omit<LocalHistoryEntry, "id" | "createdAt"> & {
     id?: string;
     createdAt?: string;
+    userId?: string;
   }
 ): LocalHistoryEntry {
   const record: LocalHistoryEntry = {
@@ -116,6 +161,7 @@ export function addLocalHistoryEntry(
     mode: entry.mode,
     title: entry.title,
     summary: entry.summary,
+    userId: entry.userId,
     testSetId: entry.testSetId,
     examMode: entry.examMode,
     listenRepeatScore: entry.listenRepeatScore,
@@ -179,10 +225,11 @@ export function saveInterviewLocalHistory(input: {
 
 export function saveMockExamLocalHistory(
   detail: LocalMockExamDetail,
-  meta?: { testSetId?: string; examMode?: TestExamMode; title?: string }
+  meta?: { testSetId?: string; examMode?: TestExamMode; title?: string; userId?: string }
 ): LocalHistoryEntry {
   return addLocalHistoryEntry({
     mode: "mock_exam",
+    userId: meta?.userId,
     testSetId: meta?.testSetId,
     examMode: meta?.examMode ?? "full",
     title: meta?.title ?? `Full Mock · ${detail.sessionTheme}`,
@@ -192,6 +239,9 @@ export function saveMockExamLocalHistory(
   });
 }
 
-export function getHistoryForTestSet(testSetId: string): LocalHistoryEntry[] {
-  return getLocalHistory().filter((e) => e.testSetId === testSetId);
+export function getHistoryForTestSet(
+  testSetId: string,
+  viewerUserId: string | null = null
+): LocalHistoryEntry[] {
+  return getLocalHistory(viewerUserId).filter((e) => e.testSetId === testSetId);
 }

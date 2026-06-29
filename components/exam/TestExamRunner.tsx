@@ -143,7 +143,7 @@ import {
   ensureMicrophonePermission,
   formatMicrophoneError,
 } from "@/lib/microphone";
-import { fetchCurrentUser } from "@/lib/auth/client";
+import { useAuthSession } from "@/lib/auth/useAuthSession";
 import { getInterviewSectionImageUrl } from "@/lib/visualAssets";
 import { buildInterviewSampleAnswer } from "@/lib/interviewSampleAnswer";
 
@@ -338,7 +338,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { user, userId } = useAuthSession();
+  const isAdmin = Boolean(user?.isAdmin);
 
 
 
@@ -408,14 +409,6 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
   stageRef.current = stage;
 
   const sectionBreakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-
-
-  useEffect(() => {
-
-    void fetchCurrentUser().then((user) => setIsAdmin(Boolean(user?.isAdmin)));
-
-  }, []);
 
 
 
@@ -1177,6 +1170,8 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
         examMode: mode,
 
         title: `${testTitle} · ${MODE_LABEL[mode]}`,
+
+        userId: userId ?? undefined,
 
       });
 

@@ -1,4 +1,9 @@
 import type { PublicUser } from "@/lib/auth/types";
+import { dispatchAuthSessionChanged } from "@/lib/auth/sessionEvents";
+import {
+  claimLegacyLocalHistory,
+  sealLocalHistoryOnLogout,
+} from "@/lib/localHistory";
 
 export async function fetchCurrentUser(): Promise<PublicUser | null> {
   try {
@@ -25,7 +30,10 @@ export async function loginWithPassword(
   if (!res.ok) {
     return { error: (data.error as string) ?? "Login failed." };
   }
-  return { user: data.user as PublicUser };
+  const user = data.user as PublicUser;
+  claimLegacyLocalHistory(user.id);
+  dispatchAuthSessionChanged();
+  return { user };
 }
 
 export async function registerWithPassword(input: {
@@ -43,14 +51,22 @@ export async function registerWithPassword(input: {
   if (!res.ok) {
     return { error: (data.error as string) ?? "Registration failed." };
   }
-  return { user: data.user as PublicUser };
+  const user = data.user as PublicUser;
+  claimLegacyLocalHistory(user.id);
+  dispatchAuthSessionChanged();
+  return { user };
 }
 
 export async function logout(): Promise<void> {
+  const user = await fetchCurrentUser();
+  if (user) {
+    sealLocalHistoryOnLogout(user.id);
+  }
   await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "include",
   });
+  dispatchAuthSessionChanged();
 }
 
 export function isAuthClientConfigured(): boolean {
