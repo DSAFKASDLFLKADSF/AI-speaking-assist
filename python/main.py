@@ -20,7 +20,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import requests
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, Query
@@ -210,15 +210,31 @@ class BehaviorMetrics(BaseModel):
     longest_pause_seconds: float = Field(ge=0)
 
 
-class TranscriptReviewSpan(BaseModel):
+class TranscriptSegmentIssue(BaseModel):
+    what_needs_improvement: str
+    why_it_matters: str
+    knowledge_point: str | None = None
+
+
+class TranscriptSegmentFeedback(BaseModel):
     text: str
-    kind: Literal["grammar", "improvement", "strong"]
-    note: str = ""
+    has_issue: bool = False
+    topic_development: TranscriptSegmentIssue | None = None
+    grammar_vocabulary: TranscriptSegmentIssue | None = None
+    conciseness: TranscriptSegmentIssue | None = None
+    improved_version: str = ""
+
+
+class DeliveryFeedbackBlock(BaseModel):
+    summary: str
+    suggestion: str = ""
 
 
 class InterviewResponse(BaseModel):
     transcript: str
-    transcript_review: list[TranscriptReviewSpan] = Field(default_factory=list)
+    transcript_segments: list[TranscriptSegmentFeedback] = Field(default_factory=list)
+    pace_feedback: DeliveryFeedbackBlock | None = None
+    pronunciation_feedback: DeliveryFeedbackBlock | None = None
     scores: InterviewScores
     score_summary: str
     metrics: BehaviorMetrics
@@ -501,7 +517,67 @@ def resolve_glm_api_key() -> str:
     return key
 
 
-async def score_with_glm(prompt: ToeflScorePrompt) -> tuple[dict, dict, str, str, list[dict[str, str]]]:
+def _issue_from_dict(raw: dict[str, str] | None) -> TranscriptSegmentIssue | None:
+    if not raw:
+        return None
+    improvement = str(raw.get("whatNeedsImprovement") or "").strip()
+    why = str(raw.get("whyItMatters") or "").strip()
+    if not improvement and not why:
+        return None
+    kp = str(raw.get("knowledgePoint") or "").strip() or None
+    return TranscriptSegmentIssue(
+        what_needs_improvement=improvement,
+        why_it_matters=why,
+        knowledge_point=kp,
+    )
+
+
+def _segments_from_glm(raw_segments: list[dict[str, Any]]) -> list[TranscriptSegmentFeedback]:
+    out: list[TranscriptSegmentFeedback] = []
+    for item in raw_segments:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        has_issue = bool(item.get("hasIssue"))
+        topic = _issue_from_dict(item.get("topicDevelopment"))
+        grammar = _issue_from_dict(item.get("grammarVocabulary"))
+        concise = _issue_from_dict(item.get("conciseness"))
+        if topic or grammar or concise:
+            has_issue = True
+        out.append(
+            TranscriptSegmentFeedback(
+                text=text,
+                has_issue=has_issue,
+                topic_development=topic,
+                grammar_vocabulary=grammar,
+                conciseness=concise,
+                improved_version=str(item.get("improvedVersion") or "").strip(),
+            )
+        )
+    return out
+
+
+def _delivery_from_dict(raw: dict[str, str] | None) -> DeliveryFeedbackBlock | None:
+    if not raw:
+        return None
+    summary = str(raw.get("summary") or "").strip()
+    suggestion = str(raw.get("suggestion") or "").strip()
+    if not summary and not suggestion:
+        return None
+    return DeliveryFeedbackBlock(summary=summary, suggestion=suggestion)
+
+
+async def score_with_glm(
+    prompt: ToeflScorePrompt,
+) -> tuple[
+    dict,
+    dict,
+    str,
+    str,
+    list[dict[str, Any]],
+    dict[str, str] | None,
+    dict[str, str] | None,
+]:
     logger.info(
         "Zhipu GLM scoring task=%s model=%s base_url=%s",
         prompt.task,
@@ -526,7 +602,9 @@ async def score_with_glm(prompt: ToeflScorePrompt) -> tuple[dict, dict, str, str
         result.feedback,
         score_summary,
         result.model,
-        result.transcript_review or [],
+        result.transcript_segments or [],
+        result.pace_feedback,
+        result.pronunciation_feedback,
     )
 
 
@@ -636,7 +714,9 @@ async def run_listen_repeat_analysis(body: ListenRepeatRequest) -> ListenRepeatR
         logger.warning("Invalid listen-repeat scoring prompt: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    scores, feedback_raw, score_summary, glm_model, _transcript_review = await score_with_glm(score_prompt)
+    scores, feedback_raw, score_summary, glm_model, _, _pace, _pron = await score_with_glm(
+        score_prompt
+    )
     feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
     glm_score = scores.get("score", 1)
     rule_score = compute_listen_repeat_score(words_raw)
@@ -736,33 +816,28 @@ async def run_interview_analysis(body: InterviewRequest) -> InterviewResponse:
         logger.warning("Invalid interview scoring prompt: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    scores_raw, feedback_raw, score_summary, glm_model, transcript_review = await score_with_glm(
-        score_prompt
-    )
+    (
+        scores_raw,
+        feedback_raw,
+        score_summary,
+        glm_model,
+        transcript_segments_raw,
+        pace_raw,
+        pronunciation_raw,
+    ) = await score_with_glm(score_prompt)
     feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
 
-    review_spans: list[TranscriptReviewSpan] = []
-    for s in transcript_review:
-        text = str(s.get("text") or "").strip()
-        if not text:
-            continue
-        kind_raw = str(s.get("kind") or "improvement")
-        kind: Literal["grammar", "improvement", "strong"] = (
-            kind_raw
-            if kind_raw in ("grammar", "improvement", "strong")
-            else "improvement"
-        )
-        review_spans.append(
-            TranscriptReviewSpan(
-                text=text,
-                kind=kind,
-                note=str(s.get("note") or ""),
-            )
-        )
+    segments = _segments_from_glm(transcript_segments_raw)
+    if not segments and transcript.strip():
+        segments = [
+            TranscriptSegmentFeedback(text=transcript.strip(), has_issue=False)
+        ]
 
     return InterviewResponse(
         transcript=transcript,
-        transcript_review=review_spans,
+        transcript_segments=segments,
+        pace_feedback=_delivery_from_dict(pace_raw),
+        pronunciation_feedback=_delivery_from_dict(pronunciation_raw),
         scores=InterviewScores(
             topic=scores_raw.get("topic", 1),
             pace=scores_raw.get("pace", 1),

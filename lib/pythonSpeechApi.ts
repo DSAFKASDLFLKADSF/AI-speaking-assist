@@ -50,11 +50,34 @@ export interface PythonBehaviorMetrics {
 
 export interface PythonAnalyzeInterviewResponse {
   transcript: string;
+  transcript_segments?: Array<{
+    text: string;
+    has_issue: boolean;
+    topic_development?: {
+      what_needs_improvement: string;
+      why_it_matters: string;
+      knowledge_point?: string | null;
+    } | null;
+    grammar_vocabulary?: {
+      what_needs_improvement: string;
+      why_it_matters: string;
+      knowledge_point?: string | null;
+    } | null;
+    conciseness?: {
+      what_needs_improvement: string;
+      why_it_matters: string;
+      knowledge_point?: string | null;
+    } | null;
+    improved_version?: string;
+  }>;
+  /** @deprecated */
   transcript_review?: Array<{
     text: string;
     kind: "grammar" | "improvement" | "strong";
     note?: string;
   }>;
+  pace_feedback?: { summary: string; suggestion?: string } | null;
+  pronunciation_feedback?: { summary: string; suggestion?: string } | null;
   scores: InterviewScores;
   score_summary: string;
   metrics: PythonBehaviorMetrics;

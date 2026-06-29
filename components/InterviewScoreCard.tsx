@@ -21,10 +21,10 @@ export interface InterviewScoreCardProps {
 }
 
 const DIMENSIONS = [
-  { key: "topic", label: "Topic" },
-  { key: "pace", label: "Pace" },
-  { key: "pronunciation", label: "Pronunciation" },
-  { key: "grammar", label: "Grammar" },
+  { key: "topic", label: "Topic Development" },
+  { key: "pace", label: "Pace & Pauses" },
+  { key: "pronunciation", label: "Pronunciation & Rhythm" },
+  { key: "grammar", label: "Grammar & Vocabulary" },
 ] as const satisfies ReadonlyArray<{
   key: keyof InterviewScores;
   label: string;

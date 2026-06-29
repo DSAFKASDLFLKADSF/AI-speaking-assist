@@ -25,21 +25,40 @@ INTERVIEW_JSON_SCHEMA = {
     "pace": "integer 1-5",
     "pronunciation": "integer 1-5",
     "grammar": "integer 1-5",
-    "scoreSummary": "string, one sentence",
-    "transcriptReview": {
-        "spans": [
+    "scoreSummary": "string, one sentence overall",
+    "transcriptFeedback": {
+        "segments": [
             {
-                "text": "exact phrase copied from the transcript",
-                "kind": "grammar | improvement | strong",
-                "note": "brief note — for grammar/improvement include a corrected or better phrase",
+                "text": "exact quote — one sentence OR one complete idea group from the transcript",
+                "hasIssue": "boolean — true only if this segment has a real problem worth fixing",
+                "topicDevelopment": {
+                    "whatNeedsImprovement": "specific issue with topic/elaboration",
+                    "whyItMatters": "how it affects clarity or TOEFL performance",
+                },
+                "grammarVocabulary": {
+                    "whatNeedsImprovement": "specific grammar or word-choice issue",
+                    "whyItMatters": "brief impact on meaning",
+                    "knowledgePoint": "simple rule a high-school student can learn",
+                },
+                "conciseness": {
+                    "whatNeedsImprovement": "what is wordy, repetitive, or off-topic",
+                    "whyItMatters": "brief impact",
+                },
+                "improvedVersion": "rewritten segment keeping the student's original idea",
             }
         ],
     },
+    "paceFeedback": {
+        "summary": "whole-answer evaluation of speaking pace and pauses",
+        "suggestion": "one concrete, imitable improvement tip",
+    },
+    "pronunciationFeedback": {
+        "summary": "whole-answer evaluation of intelligibility, rhythm, intonation",
+        "suggestion": "one concrete, imitable improvement tip",
+    },
     "feedback": {
         "summary": "string, one sentence",
-        "sections": [
-            {"title": "Topic Development | Delivery | Language Use", "content": "string"}
-        ],
+        "sections": [],
     },
 }
 
@@ -117,7 +136,26 @@ Use provided metrics (WPM, pause_count, longest_pause, filler_count) as evidence
 3. Do not reward memorized templates without addressing the question.
 4. Be consistent and strict; average responses cluster around **3**, strong around **4–5**, weak **1–2**.
 5. Return **valid JSON only**, matching the required schema exactly. No markdown, no extra keys.
-6. In `transcriptReview.spans`, quote **exact substrings** from the transcript (3–8 spans). Mark grammar errors, places to improve wording/development, and 1–2 strong phrases."""
+6. **transcriptFeedback**: Divide the full transcript into natural segments (whole sentences or idea groups — do NOT chop into tiny fragments). Concatenating all segment `text` values should reconstruct the transcript. Set `hasIssue: true` ONLY for segments with real problems (unclear topic link, weak elaboration, grammar errors, unnatural vocabulary, wordiness). Skip segments that are already clear and accurate — do not invent minor nitpicks.
+7. For each problematic segment, include ONLY the relevant issue blocks (`topicDevelopment`, `grammarVocabulary`, `conciseness`). Omit blocks that do not apply. Always include `improvedVersion` when `hasIssue` is true.
+8. **paceFeedback** and **pronunciationFeedback** evaluate the **entire answer** using metrics and transcript evidence — never tie these to a single sentence.
+9. Feedback language: specific, concise, high-school level. Quote the student's exact words. Give transferable knowledge points for grammar issues.
+
+## Sentence-level transcript feedback (transcriptFeedback)
+- Divide the FULL transcript into natural segments (whole sentences or idea groups). Concatenating all `text` fields must reproduce the transcript.
+- Set `hasIssue: true` ONLY when a segment has a REAL problem: weak topic link, underdeveloped content, unclear reason/example, repetition, wordiness, grammar error, inaccurate/vague vocabulary, or confusing structure.
+- Do NOT flag clear, accurate sentences. Do NOT nitpick natural spoken English. Do NOT invent issues to fill quota.
+- For each problematic segment, include ONLY applicable blocks:
+  - **topicDevelopment**: relevance, elaboration, examples, connection to main point
+  - **grammarVocabulary**: specific error, correction, knowledgePoint in plain language
+  - **conciseness**: what to cut; only for repetition, filler, or off-topic content
+- Always include **improvedVersion** when hasIssue is true — keep the student's original idea, use high-school vocabulary.
+- Bad: "Your answer needs more elaboration." Good: "You say group study is helpful, but you do not explain how. Add one benefit, such as getting immediate feedback from classmates."
+
+## Whole-answer delivery (paceFeedback, pronunciationFeedback)
+- Evaluate the ENTIRE response — never attach pace or pronunciation issues to a single sentence.
+- paceFeedback: natural pace, pause frequency/length, fillers, one imitable tip.
+- pronunciationFeedback: overall intelligibility, rhythm/intonation from transcript cues — one imitable tip."""
 
 
 def _listen_repeat_system_prompt() -> str:

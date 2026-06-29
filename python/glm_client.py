@@ -54,7 +54,9 @@ class GlmScoreResult:
     feedback: dict[str, Any]
     score_summary: str | None = None
     model: str = DEFAULT_MODEL
-    transcript_review: list[dict[str, str]] | None = None
+    transcript_segments: list[dict[str, Any]] | None = None
+    pace_feedback: dict[str, str] | None = None
+    pronunciation_feedback: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -178,24 +180,104 @@ def _clamp_score(value: Any) -> int:
     return max(1, min(5, num))
 
 
-def _normalize_transcript_review(raw: Any) -> list[dict[str, str]]:
+def _normalize_issue_block(
+    raw: Any, *, with_knowledge_point: bool = False
+) -> dict[str, str] | None:
     if not isinstance(raw, dict):
-        return []
-    spans_raw = raw.get("spans")
-    if not isinstance(spans_raw, list):
-        return []
-    spans: list[dict[str, str]] = []
-    for item in spans_raw:
+        return None
+    improvement = str(
+        raw.get("whatNeedsImprovement") or raw.get("improvement") or ""
+    ).strip()
+    why = str(raw.get("whyItMatters") or "").strip()
+    if not improvement and not why:
+        return None
+    block: dict[str, str] = {
+        "whatNeedsImprovement": improvement,
+        "whyItMatters": why,
+    }
+    if with_knowledge_point:
+        kp = str(raw.get("knowledgePoint") or "").strip()
+        if kp:
+            block["knowledgePoint"] = kp
+    return block
+
+
+def _normalize_delivery_block(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    summary = str(raw.get("summary") or raw.get("content") or "").strip()
+    suggestion = str(raw.get("suggestion") or "").strip()
+    if not summary and not suggestion:
+        return None
+    return {"summary": summary, "suggestion": suggestion}
+
+
+def _normalize_transcript_segments(raw: Any) -> list[dict[str, Any]]:
+    segments_raw: list[Any] = []
+    if isinstance(raw, dict):
+        inner = raw.get("segments")
+        if isinstance(inner, list):
+            segments_raw = inner
+    elif isinstance(raw, list):
+        segments_raw = raw
+
+    segments: list[dict[str, Any]] = []
+    for item in segments_raw:
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
-        kind = str(item.get("kind") or "improvement").strip().lower()
-        if kind not in {"grammar", "improvement", "strong"}:
-            kind = "improvement"
-        note = str(item.get("note") or "").strip()
-        if text:
-            spans.append({"text": text, "kind": kind, "note": note})
-    return spans
+        if not text:
+            continue
+        has_issue = bool(item.get("hasIssue"))
+        topic = _normalize_issue_block(item.get("topicDevelopment"))
+        grammar = _normalize_issue_block(
+            item.get("grammarVocabulary"), with_knowledge_point=True
+        )
+        concise = _normalize_issue_block(item.get("conciseness"))
+        improved = str(item.get("improvedVersion") or "").strip()
+
+        if topic or grammar or concise:
+            has_issue = True
+
+        seg: dict[str, Any] = {"text": text, "hasIssue": has_issue}
+        if topic:
+            seg["topicDevelopment"] = topic
+        if grammar:
+            seg["grammarVocabulary"] = grammar
+        if concise:
+            seg["conciseness"] = concise
+        if has_issue and improved:
+            seg["improvedVersion"] = improved
+        segments.append(seg)
+    return segments
+
+
+def _legacy_spans_to_segments(spans: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Convert old transcriptReview.spans into minimal segment format."""
+    segments: list[dict[str, Any]] = []
+    for span in spans:
+        text = str(span.get("text") or "").strip()
+        if not text:
+            continue
+        kind = str(span.get("kind") or "improvement")
+        note = str(span.get("note") or "").strip()
+        if kind == "strong":
+            segments.append({"text": text, "hasIssue": False})
+            continue
+        seg: dict[str, Any] = {"text": text, "hasIssue": True, "improvedVersion": ""}
+        if kind == "grammar":
+            seg["grammarVocabulary"] = {
+                "whatNeedsImprovement": note or "Review this phrase for grammar.",
+                "whyItMatters": "Grammar errors can make your meaning harder to follow.",
+                "knowledgePoint": "",
+            }
+        else:
+            seg["topicDevelopment"] = {
+                "whatNeedsImprovement": note or "This part could be clearer.",
+                "whyItMatters": "Clearer development helps the listener follow your answer.",
+            }
+        segments.append(seg)
+    return segments
 
 
 def _normalize_feedback(raw: Any) -> dict[str, Any]:
@@ -328,7 +410,32 @@ def call_glm(
     scores = _normalize_scores(parsed, task)
     feedback = _normalize_feedback(parsed.get("feedback"))
     score_summary = str(parsed.get("scoreSummary") or feedback.get("summary") or "").strip()
-    transcript_review = _normalize_transcript_review(parsed.get("transcriptReview"))
+
+    transcript_segments: list[dict[str, Any]] | None = None
+    pace_feedback: dict[str, str] | None = None
+    pronunciation_feedback: dict[str, str] | None = None
+
+    if task == "interview":
+        transcript_segments = _normalize_transcript_segments(
+            parsed.get("transcriptFeedback")
+        )
+        if not transcript_segments and isinstance(parsed.get("transcriptReview"), dict):
+            legacy_spans_raw = parsed["transcriptReview"].get("spans")
+            if isinstance(legacy_spans_raw, list):
+                legacy_spans = [
+                    {
+                        "text": str(s.get("text") or ""),
+                        "kind": str(s.get("kind") or "improvement"),
+                        "note": str(s.get("note") or ""),
+                    }
+                    for s in legacy_spans_raw
+                    if isinstance(s, dict)
+                ]
+                transcript_segments = _legacy_spans_to_segments(legacy_spans)
+        pace_feedback = _normalize_delivery_block(parsed.get("paceFeedback"))
+        pronunciation_feedback = _normalize_delivery_block(
+            parsed.get("pronunciationFeedback")
+        )
 
     if not feedback.get("summary") and score_summary:
         feedback = {**feedback, "summary": score_summary}
@@ -340,5 +447,7 @@ def call_glm(
         feedback=feedback,
         score_summary=score_summary or None,
         model=model,
-        transcript_review=transcript_review or None,
+        transcript_segments=transcript_segments or None,
+        pace_feedback=pace_feedback,
+        pronunciation_feedback=pronunciation_feedback,
     )
