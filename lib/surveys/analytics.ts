@@ -2,7 +2,6 @@ import type {
   PostSurveyAnswers,
   PreSurveyAnswers,
   SurveyResponseRow,
-  SurveyType,
 } from "@/lib/surveys/types";
 import {
   labelForOption,

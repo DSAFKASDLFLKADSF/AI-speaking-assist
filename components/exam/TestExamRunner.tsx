@@ -1049,9 +1049,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     },
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-
-    [plan.interviewSession, testId, testTitle, mode]
+    [plan.interviewSession, testId, testTitle, mode] // eslint-disable-line react-hooks/exhaustive-deps -- finishWithResults defined below
 
   );
 
@@ -1228,9 +1226,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
     },
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-
-    [plan.interviewSession, testId, testTitle, mode]
+    [plan.interviewSession, testId, testTitle, mode] // eslint-disable-line react-hooks/exhaustive-deps -- finishWithResults defined below
 
   );
 
