@@ -24,10 +24,12 @@ from toefl_rubric import ToeflScorePrompt
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
-DEFAULT_MODEL = "glm-4.7"
-DEFAULT_TIMEOUT = 60.0
-GLM_RATE_LIMIT_RETRIES = 4
+DEFAULT_MODEL = "glm-4.7-flashx"
+DEFAULT_TIMEOUT = float(os.getenv("GLM_TIMEOUT_SECONDS", "120"))
+DEFAULT_MAX_OUTPUT_TOKENS = int(os.getenv("GLM_MAX_OUTPUT_TOKENS", "8192"))
+GLM_REQUEST_RETRIES = 4
 GLM_RATE_LIMIT_BASE_DELAY = 2.0
+GLM_TIMEOUT_RETRY_DELAY = 3.0
 
 INTERVIEW_SCORE_KEYS = ("topic", "pace", "pronunciation", "grammar")
 LISTEN_REPEAT_SCORE_KEY = "score"
@@ -320,6 +322,25 @@ def _normalize_scores(parsed: dict[str, Any], task: str | None) -> dict[str, int
     return scores
 
 
+def _thinking_disabled() -> bool:
+    raw = os.getenv("GLM_THINKING", "disabled").strip().lower()
+    return raw not in ("enabled", "true", "1", "on")
+
+
+def _build_completion_kwargs(model: str) -> dict[str, Any]:
+    """Fast-path options: disable thinking, cap output length."""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+    }
+    if DEFAULT_MAX_OUTPUT_TOKENS > 0:
+        kwargs["max_tokens"] = DEFAULT_MAX_OUTPUT_TOKENS
+    if _thinking_disabled():
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    return kwargs
+
+
 def call_glm(
     prompt: ToeflScorePrompt | dict[str, str],
     *,
@@ -360,32 +381,43 @@ def call_glm(
         timeout=timeout,
     )
 
+    create_kwargs = _build_completion_kwargs(model)
+    create_kwargs["messages"] = messages
+
     try:
         completion = None
-        last_rate_limit: GlmApiError | None = None
-        for attempt in range(GLM_RATE_LIMIT_RETRIES):
+        last_retryable: GlmApiError | None = None
+        for attempt in range(GLM_REQUEST_RETRIES):
             try:
-                completion = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=0.2,
-                )
+                completion = client.chat.completions.create(**create_kwargs)
                 break
             except RateLimitError as exc:
-                last_rate_limit = _map_openai_error(exc)
-                if attempt >= GLM_RATE_LIMIT_RETRIES - 1:
-                    raise last_rate_limit from exc
+                last_retryable = _map_openai_error(exc)
+                if attempt >= GLM_REQUEST_RETRIES - 1:
+                    raise last_retryable from exc
                 delay = GLM_RATE_LIMIT_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "Zhipu rate limit — retry %s/%s in %.1fs",
                     attempt + 1,
-                    GLM_RATE_LIMIT_RETRIES,
+                    GLM_REQUEST_RETRIES,
+                    delay,
+                )
+                time.sleep(delay)
+            except APITimeoutError as exc:
+                last_retryable = _map_openai_error(exc)
+                if attempt >= GLM_REQUEST_RETRIES - 1:
+                    raise last_retryable from exc
+                delay = GLM_TIMEOUT_RETRY_DELAY * (attempt + 1)
+                logger.warning(
+                    "Zhipu timeout (limit=%ss) — retry %s/%s in %.1fs",
+                    timeout,
+                    attempt + 1,
+                    GLM_REQUEST_RETRIES,
                     delay,
                 )
                 time.sleep(delay)
         if completion is None:
-            raise last_rate_limit or GlmApiError("Zhipu API request failed.")
+            raise last_retryable or GlmApiError("Zhipu API request failed.")
     except GlmApiError:
         raise
     except Exception as exc:

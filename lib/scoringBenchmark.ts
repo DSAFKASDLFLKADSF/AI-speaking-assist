@@ -97,7 +97,7 @@ export function buildBenchmarkPayloads(
 export const STAGE_LABEL_ZH: Record<string, string> = {
   fetch_audio: "下载录音",
   transcribe: "语音转文字 (AssemblyAI)",
-  audio_features: "语速 / 停顿 / 填充词分析",
+  audio_features: "转写指标 (语速/停顿/填充词)",
   word_align: "与原文逐词对齐",
   build_prompt: "构建 GLM 评分提示",
   glm_scoring: "AI 评分与反馈 (GLM)",

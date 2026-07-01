@@ -112,7 +112,7 @@ nano python/.env
 ```env
 GLM_API_KEY=你的智谱key
 GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-MODEL_NAME=glm-4.7
+MODEL_NAME=glm-4.7-flashx
 
 ASSEMBLYAI_API_KEY=你的AssemblyAIKey
 ASSEMBLYAI_BASE_URL=https://api.assemblyai.com

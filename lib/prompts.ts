@@ -56,7 +56,7 @@ function flattenOfficialListenRepeat(
   return prompts;
 }
 
-/** All official Listen & Repeat items (4 sets × 7 sentences = 28). */
+/** All Listen & Repeat items (8 sets × 7 sentences = 56). */
 export const LISTEN_REPEAT_PROMPTS: ListenRepeatPrompt[] =
   flattenOfficialListenRepeat(OFFICIAL_SPEAKING_SETS);
 

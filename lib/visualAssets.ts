@@ -53,6 +53,10 @@ const LR_SET_SCENE_TOPICS: Record<string, string[]> = {
   "ets-fl-01": ["society", "environment", "environment", "health", "science", "education", "general"],
   "ets-fl-02": ["health", "health", "health", "campus", "health", "education", "campus"],
   "ets-tr-02": ["education", "education", "education", "education", "education", "technology", "education"],
+  "custom-01": ["society", "society", "society", "society", "society", "society", "society"],
+  "custom-02": ["transportation", "transportation", "transportation", "transportation", "transportation", "transportation", "transportation"],
+  "custom-03": ["campus", "campus", "campus", "campus", "campus", "campus", "campus"],
+  "custom-04": ["education", "education", "education", "education", "education", "education", "education"],
 };
 
 const LR_SET_SCENE_LABELS: Record<string, string[]> = {
@@ -92,6 +96,42 @@ const LR_SET_SCENE_LABELS: Record<string, string[]> = {
     "Online account",
     "Return bin",
   ],
+  "custom-01": [
+    "Museum entrance",
+    "Ticket check",
+    "Information desk",
+    "Second floor",
+    "Galleries",
+    "Guided tours",
+    "Visitor rules",
+  ],
+  "custom-02": [
+    "Platform 4",
+    "On-time service",
+    "Ticket scan",
+    "Safety line",
+    "Announcements",
+    "Conductor desk",
+    "Baggage rules",
+  ],
+  "custom-03": [
+    "Parking lot",
+    "Permit display",
+    "North garage",
+    "Accessible spots",
+    "Rate sign",
+    "Security office",
+    "Overnight rules",
+  ],
+  "custom-04": [
+    "Library entrance",
+    "Self-checkout",
+    "Fiction floor",
+    "Quiet zones",
+    "Reference area",
+    "Help desk",
+    "Return box",
+  ],
 };
 
 export function getListenRepeatSceneVisual(
@@ -116,6 +156,10 @@ export function getInterviewSectionImageUrl(officialSetId: string): string {
     "ets-fl-01": "society",
     "ets-fl-02": "transportation",
     "ets-tr-02": "health",
+    "custom-01": "education",
+    "custom-02": "technology",
+    "custom-03": "society",
+    "custom-04": "transportation",
   };
   const slug = map[officialSetId] ?? "general";
   return `/images/topics/${slug}.svg`;

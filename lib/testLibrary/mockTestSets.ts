@@ -106,12 +106,28 @@ function makeSet(
   };
 }
 
-/** One card per official ETS Speaking practice set (7 L&R + 4 Interview). */
+/** Official ETS sets + custom practice tests mapped to dashboard cards. */
+const TEST_TO_OFFICIAL_SET: Record<string, string> = {
+  "test-01": "ets-tr-01",
+  "test-02": "ets-fl-01",
+  "test-03": "ets-fl-02",
+  "test-04": "ets-tr-02",
+  "test-05": "custom-01",
+  "test-06": "custom-02",
+  "test-07": "custom-03",
+  "test-08": "custom-04",
+};
+
+/** One card per speaking practice set (7 L&R + 4 Interview). */
 export const MOCK_TEST_SETS: TestSet[] = [
   makeSet("test-01", "ets-tr-01", 2847),
   makeSet("test-02", "ets-fl-01", 1923),
   makeSet("test-03", "ets-fl-02", 3102),
   makeSet("test-04", "ets-tr-02", 1567),
+  makeSet("test-05", "custom-01", 1240),
+  makeSet("test-06", "custom-02", 986),
+  makeSet("test-07", "custom-03", 1105),
+  makeSet("test-08", "custom-04", 872),
 ];
 
 export function getTestSetById(id: string): TestSet | undefined {
@@ -124,7 +140,5 @@ export function formatUserCount(n: number): string {
 }
 
 export function getOfficialSetIdForTest(testId: string): string | undefined {
-  const index = MOCK_TEST_SETS.findIndex((t) => t.id === testId);
-  if (index < 0) return undefined;
-  return OFFICIAL_SPEAKING_SETS[index]?.id;
+  return TEST_TO_OFFICIAL_SET[testId];
 }

@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { BenchmarkScoreResult } from "@/components/admin/BenchmarkScoreResult";
 import { isAdminUser } from "@/lib/auth/admins";
 import { useAuthSession } from "@/lib/auth/useAuthSession";
-import type { PythonBenchmarkStage } from "@/lib/pythonSpeechApi";
+import type {
+  PythonBenchmarkInterviewResult,
+  PythonBenchmarkListenRepeatResult,
+  PythonBenchmarkStage,
+} from "@/lib/pythonSpeechApi";
 import {
   buildBenchmarkPayloads,
   stageLabelZh,
@@ -20,6 +25,7 @@ interface QuestionResult {
   apiRoundTripSeconds: number;
   error?: string | null;
   scorePreview?: string | null;
+  result?: PythonBenchmarkInterviewResult | PythonBenchmarkListenRepeatResult | null;
 }
 
 function average(values: number[]): number {
@@ -92,6 +98,7 @@ export function ScoringBenchmarkClient() {
           api_round_trip_seconds?: number;
           total_seconds?: number;
           score_preview?: string | null;
+          result?: PythonBenchmarkInterviewResult | PythonBenchmarkListenRepeatResult | null;
         };
 
         if (!res.ok) {
@@ -111,6 +118,7 @@ export function ScoringBenchmarkClient() {
             apiRoundTripSeconds: data.api_round_trip_seconds ?? 0,
             error: data.error,
             scorePreview: data.score_preview,
+            result: data.result ?? null,
           },
         ]);
       }
@@ -141,9 +149,9 @@ export function ScoringBenchmarkClient() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">评分耗时测试</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">开发者 · 评分测试</h1>
         <p className="mt-2 text-sm text-slate-600">
-          使用官方样例音频跑完整评分管线，逐题汇报每个环节耗时（秒）。题目按顺序执行，不会并行。
+          用官方样例音频跑完整评分管线：汇报各环节耗时，并展示与正式考试相同的评分结果（分数、转写、反馈）。
         </p>
       </div>
 
@@ -251,10 +259,14 @@ export function ScoringBenchmarkClient() {
                 ))}
               </ol>
 
-              {result.scorePreview && (
+              {result.scorePreview && !result.result && (
                 <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
                   {result.scorePreview}
                 </p>
+              )}
+
+              {result.success && result.result && (
+                <BenchmarkScoreResult kind={kind} result={result.result} />
               )}
             </article>
           ))}
@@ -291,7 +303,7 @@ export function ScoringBenchmarkClient() {
             <strong>AI 评分 (GLM)</strong>：通常 15–60 秒。Interview 还要生成逐句 Topic / Grammar / Conciseness 反馈，JSON 更大、更容易触发限流或超时。
           </li>
           <li>
-            <strong>音频特征分析</strong>：约 1–2 秒，计算语速、停顿、填充词。
+            <strong>转写指标</strong>：毫秒级，从 AssemblyAI 词时间戳 + 文本统计语速、停顿、填充词。
           </li>
           <li>
             <strong>正式考试里更慢</strong>：4 道 Interview 题串行评分（同时只跑 1 个任务），前面题目还在排队时你会在结果页看到「分析中」。

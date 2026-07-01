@@ -46,7 +46,7 @@ services:
       - key: GLM_BASE_URL
         value: https://open.bigmodel.cn/api/paas/v4
       - key: MODEL_NAME
-        value: glm-4.7
+        value: glm-4.7-flashx
 
       # --- Service auth (Next.js → Python Bearer token) ---
       - key: PYTHON_SPEECH_API_KEY

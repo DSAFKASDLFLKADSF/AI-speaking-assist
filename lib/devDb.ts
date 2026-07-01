@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { newDb, type IMemoryDb } from "pg-mem";
 import type { Pool, PoolClient } from "pg";
+import { ensureDevAdminUser } from "@/lib/devSeedAdmin";
 
 const globalForDevDb = globalThis as unknown as {
   devDb?: IMemoryDb;
@@ -103,6 +104,15 @@ const DEV_SCHEMA_STATEMENTS = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_scores_audio_response UNIQUE (audio_response_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS survey_responses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+    client_id TEXT,
+    survey_type TEXT NOT NULL,
+    answers TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 async function ensureDevSchema(): Promise<void> {
@@ -115,6 +125,7 @@ async function ensureDevSchema(): Promise<void> {
         db.public.none(statement);
       }
       globalForDevDb.devSchemaInitialized = true;
+      await ensureDevAdminUser();
     })();
   }
   await globalForDevDb.devSchemaReady;

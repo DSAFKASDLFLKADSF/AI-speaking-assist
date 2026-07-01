@@ -275,6 +275,85 @@ def _detect_pauses_from_word_gaps(
     return pauses
 
 
+def _resolve_duration_seconds(
+    word_count: int,
+    *,
+    duration_seconds: float | None = None,
+    duration_hint: float | None = None,
+    words: Sequence["WhisperWord"] | None = None,
+    audio_bytes: bytes | None = None,
+) -> float:
+    """Pick the best available duration without decoding audio."""
+    if duration_hint and duration_hint > 0:
+        return round(duration_hint, 2)
+    if duration_seconds and duration_seconds > 0:
+        return round(float(duration_seconds), 2)
+
+    timed = [w for w in (words or []) if w.start is not None and w.end is not None]
+    if len(timed) >= 2:
+        span = float(timed[-1].end) - float(timed[0].start)  # type: ignore[arg-type]
+        if span > 0:
+            return round(span, 2)
+    if len(timed) == 1 and timed[0].end is not None:
+        return round(max(float(timed[0].end), 0.1), 2)  # type: ignore[arg-type]
+
+    return _estimate_duration_seconds(audio_bytes, word_count, None)
+
+
+def features_from_transcription(
+    transcript: str,
+    *,
+    words: Sequence["WhisperWord"] | None = None,
+    duration_seconds: float | None = None,
+    duration_hint: float | None = None,
+    audio_bytes: bytes | None = None,
+    min_pause_duration: float = DEFAULT_MIN_PAUSE_SECONDS,
+) -> AudioFeatures:
+    """
+    Lightweight speaking metrics from transcript + word timestamps.
+
+    Avoids Librosa/ffmpeg audio decode — suitable for GLM scoring evidence.
+    """
+    text = transcript.strip()
+    tokens = [t for t in text.split() if t]
+    word_count = len(tokens)
+    filler_count = _count_fillers(text)
+
+    duration = _resolve_duration_seconds(
+        word_count,
+        duration_seconds=duration_seconds,
+        duration_hint=duration_hint,
+        words=words,
+        audio_bytes=audio_bytes,
+    )
+    duration = max(duration, 0.1)
+
+    pauses = _detect_pauses_from_word_gaps(
+        words or [], min_pause_duration=min_pause_duration
+    )
+    if pauses:
+        pause_count = len(pauses)
+        longest_pause = round(max(pauses), 2)
+    else:
+        punctuation_pauses = len(re.findall(r"[,;:.!?…]", text))
+        pause_count = max(0, punctuation_pauses + filler_count)
+        longest_pause = round(
+            min(duration * 0.4, max(0.3, filler_count * 0.5)), 2
+        )
+
+    duration_min = duration / 60.0
+    wpm = round(word_count / duration_min, 1) if word_count else 0.0
+
+    return AudioFeatures(
+        wpm=wpm,
+        pause_count=pause_count,
+        longest_pause=longest_pause,
+        filler_count=filler_count,
+        duration_seconds=round(duration, 2),
+        word_count=word_count,
+    )
+
+
 def analyze_audio_features(
     audio: str | Path | bytes | np.ndarray,
     transcript: str,

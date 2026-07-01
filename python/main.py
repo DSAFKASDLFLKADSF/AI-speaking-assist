@@ -33,7 +33,7 @@ from analysis import (
     build_word_comparison,
     compute_listen_repeat_score,
 )
-from audio_features import AudioFeatures, analyze_audio_features
+from audio_features import AudioFeatures, features_from_transcription
 from audio_utils import download_audio, is_publicly_fetchable_url
 from glm_client import DEFAULT_BASE_URL, DEFAULT_MODEL, GlmApiError, call_glm
 from toefl_rubric import ToeflScorePrompt, get_toefl_score_prompt
@@ -89,6 +89,9 @@ class Settings(BaseSettings):
         default=DEFAULT_MODEL,
         validation_alias=AliasChoices("GLM_MODEL", "MODEL_NAME"),
     )
+    glm_timeout_seconds: float = Field(default=120.0, alias="GLM_TIMEOUT_SECONDS")
+    glm_max_output_tokens: int = Field(default=8192, alias="GLM_MAX_OUTPUT_TOKENS")
+    glm_thinking: str = Field(default="disabled", alias="GLM_THINKING")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     class Config:
@@ -446,30 +449,22 @@ def _guess_extension(content_type: str | None) -> str:
     return "webm"
 
 
-async def analyze_audio(
-    audio_bytes: bytes,
-    transcript: str,
+def behavior_features_from_transcription(
+    transcription: WhisperTranscription,
     *,
-    whisper_words: list | None = None,
-    content_type: str | None = None,
     duration_hint: float | None = None,
+    audio_bytes: bytes | None = None,
 ) -> AudioFeatures:
-    logger.info(
-        "Librosa analyzing audio transcript_chars=%s content_type=%s",
-        len(transcript),
-        content_type,
-    )
-    features = await asyncio.to_thread(
-        analyze_audio_features,
-        audio_bytes,
-        transcript,
-        words=whisper_words,
-        content_type=content_type,
+    """WPM / pauses / fillers from transcript timestamps — no Librosa decode."""
+    features = features_from_transcription(
+        transcription.transcript,
+        words=transcription.words,
+        duration_seconds=transcription.duration,
         duration_hint=duration_hint,
+        audio_bytes=audio_bytes,
     )
-
     logger.info(
-        "Audio features wpm=%s pauses=%s fillers=%s duration=%ss",
+        "Transcript metrics wpm=%s pauses=%s fillers=%s duration=%ss",
         features.wpm,
         features.pause_count,
         features.filler_count,
@@ -592,6 +587,7 @@ async def score_with_glm(
             api_key=resolve_glm_api_key(),
             base_url=settings.glm_base_url,
             model=settings.glm_model,
+            timeout=settings.glm_timeout_seconds,
         )
     except GlmApiError as exc:
         raise http_exception_from_glm(exc) from exc
@@ -693,12 +689,7 @@ async def run_listen_repeat_analysis(body: ListenRepeatRequest) -> ListenRepeatR
             )
         raise HTTPException(status_code=422, detail="Empty transcript.")
 
-    features = await analyze_audio(
-        audio_bytes,
-        transcript,
-        whisper_words=transcription.words,
-        content_type=content_type,
-    )
+    features = behavior_features_from_transcription(transcription, audio_bytes=audio_bytes)
     words_raw = build_word_comparison(body.reference_text, transcript)
     word_stats = word_stats_from_comparison(words_raw)
 
@@ -780,29 +771,11 @@ async def run_interview_analysis(body: InterviewRequest) -> InterviewResponse:
                 detail="Empty transcript. Speak clearly and try recording again.",
             )
 
-    features = await analyze_audio(
-        audio_bytes,
-        transcript,
-        whisper_words=transcription.words,
-        content_type=content_type,
+    features = behavior_features_from_transcription(
+        transcription,
         duration_hint=body.duration_ms / 1000 if body.duration_ms > 0 else None,
+        audio_bytes=audio_bytes,
     )
-    if body.duration_ms > 0:
-        duration_seconds = round(body.duration_ms / 1000, 2)
-        duration_min = max(duration_seconds / 60, 1 / 60)
-        wpm = (
-            round(features.word_count / duration_min, 1)
-            if features.word_count
-            else 0.0
-        )
-        features = AudioFeatures(
-            wpm=wpm,
-            pause_count=features.pause_count,
-            longest_pause=features.longest_pause,
-            filler_count=features.filler_count,
-            duration_seconds=duration_seconds,
-            word_count=features.word_count,
-        )
 
     try:
         score_prompt = get_toefl_score_prompt(
@@ -1054,6 +1027,7 @@ class BenchmarkRunOneResponse(BaseModel):
     total_seconds: float
     error: str | None = None
     score_preview: str | None = None
+    result: dict[str, Any] | None = None
 
 
 async def _run_interview_timed(item: BenchmarkInterviewItem) -> BenchmarkRunOneResponse:
@@ -1079,14 +1053,12 @@ async def _run_interview_timed(item: BenchmarkInterviewItem) -> BenchmarkRunOneR
         if not transcript:
             raise HTTPException(status_code=422, detail="Empty transcript.")
 
-        features = await analyze_audio_features(
-            audio_bytes,
-            transcript,
-            whisper_words=transcription.words,
-            content_type=content_type,
+        features = behavior_features_from_transcription(
+            transcription,
             duration_hint=body.duration_ms / 1000 if body.duration_ms > 0 else None,
+            audio_bytes=audio_bytes,
         )
-        timer.mark("audio_features", "Pause / pace / filler analysis")
+        timer.mark("audio_features", "Transcript metrics (WPM / pauses / fillers)")
 
         score_prompt = get_toefl_score_prompt(
             task="interview",
@@ -1116,7 +1088,7 @@ async def _run_interview_timed(item: BenchmarkInterviewItem) -> BenchmarkRunOneR
                 TranscriptSegmentFeedback(text=transcript.strip(), has_issue=False)
             ]
 
-        _ = InterviewResponse(
+        response = InterviewResponse(
             transcript=transcript,
             transcript_segments=segments,
             pace_feedback=_delivery_from_dict(pace_raw),
@@ -1140,6 +1112,7 @@ async def _run_interview_timed(item: BenchmarkInterviewItem) -> BenchmarkRunOneR
             stages=[TimingStage(**s) for s in timer.to_list()],
             total_seconds=timer.total_seconds(),
             score_preview=score_summary,
+            result=response.model_dump(),
         )
     except HTTPException as exc:
         timer.mark("failed", f"Failed: {exc.detail}")
@@ -1194,13 +1167,11 @@ async def _run_listen_repeat_timed(
                 raise HTTPException(status_code=503, detail="Transcription not configured.")
             raise HTTPException(status_code=422, detail="Empty transcript.")
 
-        features = await analyze_audio_features(
-            audio_bytes,
-            transcript,
-            whisper_words=transcription.words,
-            content_type=content_type,
+        features = behavior_features_from_transcription(
+            transcription,
+            audio_bytes=audio_bytes,
         )
-        timer.mark("audio_features", "Pause / pace / filler analysis")
+        timer.mark("audio_features", "Transcript metrics (WPM / pauses / fillers)")
 
         words_raw = build_word_comparison(item.reference_text, transcript)
         word_stats = word_stats_from_comparison(words_raw)
@@ -1226,6 +1197,22 @@ async def _run_listen_repeat_timed(
         rule_score = compute_listen_repeat_score(words_raw)
         score = min(glm_score, rule_score)
 
+        delivery, language, topic = listen_repeat_to_ets(score)
+        response = ListenRepeatResponse(
+            transcript=transcript,
+            score=score,
+            score_summary=score_summary,
+            words=[ComparisonWord(**w) for w in words_raw],
+            feedback=FeedbackBlock(**feedback_raw),
+            duration_seconds=features.duration_seconds,
+            mime_type=content_type,
+            file_size_bytes=_file_size,
+            delivery_score=delivery,
+            language_use_score=language,
+            topic_development_score=topic,
+            model=f"{transcription.model}+{glm_model}",
+        )
+
         return BenchmarkRunOneResponse(
             kind="listen_repeat",
             title=item.title,
@@ -1233,6 +1220,7 @@ async def _run_listen_repeat_timed(
             stages=[TimingStage(**s) for s in timer.to_list()],
             total_seconds=timer.total_seconds(),
             score_preview=f"Score {score}/5 — {score_summary}",
+            result=response.model_dump(),
         )
     except HTTPException as exc:
         timer.mark("failed", f"Failed: {exc.detail}")

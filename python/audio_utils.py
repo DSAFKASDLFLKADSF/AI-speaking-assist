@@ -88,6 +88,44 @@ def is_publicly_fetchable_url(url: str) -> bool:
         return False
 
 
+def is_local_fetch_url(url: str) -> bool:
+    """True for same-machine URLs that must not go through HTTP_PROXY."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        return host in ("localhost", "127.0.0.1", "[::1]", "0.0.0.0")
+    except Exception:
+        return False
+
+
+def try_read_local_public_audio(url: str) -> tuple[bytes, str | None] | None:
+    """
+  Read /audio/* files from the repo public/ folder when Python runs beside Next.js.
+  Avoids HTTP round-trips and proxy issues for benchmark sample audio.
+  """
+    try:
+        parsed = urlparse(url)
+        if not is_local_fetch_url(url):
+            return None
+        rel = parsed.path
+        if not rel.startswith("/audio/"):
+            return None
+        repo_root = Path(__file__).resolve().parent.parent
+        file_path = repo_root / "public" / rel.lstrip("/")
+        if not file_path.is_file():
+            return None
+        suffix = file_path.suffix.lower()
+        content_type = {
+            ".mp3": "audio/mpeg",
+            ".webm": "audio/webm",
+            ".wav": "audio/wav",
+            ".m4a": "audio/mp4",
+            ".ogg": "audio/ogg",
+        }.get(suffix)
+        return file_path.read_bytes(), content_type
+    except Exception:
+        return None
+
+
 def normalize_local_fetch_url(url: str) -> str:
     """Use 127.0.0.1 instead of localhost for same-machine HTTP fetches."""
     try:
@@ -117,12 +155,39 @@ def download_audio(
     The caller is responsible for deleting the file via `DownloadedAudio.cleanup()`.
     """
     url = normalize_local_fetch_url(url)
-    response = requests.get(
-        url,
-        stream=True,
-        timeout=timeout,
-        allow_redirects=True,
-    )
+
+    local = try_read_local_public_audio(url)
+    if local is not None:
+        audio_bytes, content_type = local
+        suffix = _suffix_from_content_type(content_type)
+        if suffix == ".bin":
+            url_suffix = _suffix_from_url(url)
+            if url_suffix:
+                suffix = url_suffix
+        fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="audio_")
+        try:
+            with os.fdopen(fd, "wb") as temp_file:
+                temp_file.write(audio_bytes)
+        except Exception:
+            os.unlink(temp_path)
+            raise
+        return DownloadedAudio(
+            path=Path(temp_path),
+            content_type=content_type,
+            file_size_bytes=len(audio_bytes),
+            suffix=suffix,
+        )
+
+    request_kwargs: dict = {
+        "stream": True,
+        "timeout": timeout,
+        "allow_redirects": True,
+    }
+    if is_local_fetch_url(url):
+        # Bypass system HTTP_PROXY (e.g. Clash on 127.0.0.1:3213) for localhost.
+        request_kwargs["proxies"] = {"http": None, "https": None}
+
+    response = requests.get(url, **request_kwargs)
     response.raise_for_status()
 
     content_type = response.headers.get("content-type")

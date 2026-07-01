@@ -28,7 +28,7 @@ Whisper（转写）与智谱 GLM（打分）使用独立配置。Listen & Repeat
 # 智谱 — 打分（Listen & Repeat + Virtual Interview）
 GLM_API_KEY=your_zhipu_api_key
 GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-MODEL_NAME=glm-4.7
+MODEL_NAME=glm-4.7-flashx
 
 # AssemblyAI — 转写（Listen & Repeat + Virtual Interview）
 ASSEMBLYAI_API_KEY=your_assemblyai_key

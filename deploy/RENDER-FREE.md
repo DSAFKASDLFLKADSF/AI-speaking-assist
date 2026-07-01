@@ -40,7 +40,7 @@
 | `GLM_API_KEY` | 本地 `python/.env` 里的智谱 key |
 | `ASSEMBLYAI_API_KEY` | 本地 `python/.env` 里的 key |
 | `GLM_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` |
-| `MODEL_NAME` | `glm-4.7` |
+| `MODEL_NAME` | `glm-4.7-flashx` |
 | `ASSEMBLYAI_BASE_URL` | `https://api.assemblyai.com` |
 | `ASSEMBLYAI_SPEECH_MODELS` | `universal-2` |
 | `PYTHON_SPEECH_API_KEY` | 自己设密码，如 `my-secret-2026` |

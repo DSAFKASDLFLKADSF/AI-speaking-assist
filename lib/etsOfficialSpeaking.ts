@@ -8,6 +8,7 @@
  */
 
 import type { InterviewHintBullet } from "@/lib/interviewHintContent";
+import { CUSTOM_SPEAKING_SETS } from "@/lib/customSpeakingSets";
 
 /** Official per-item response windows for Listen & Repeat (items 1–7). */
 export const OFFICIAL_LR_RESPONSE_SECONDS = [8, 8, 10, 10, 10, 12, 12] as const;
@@ -52,7 +53,8 @@ export interface OfficialSpeakingSet {
   interview: OfficialInterviewBlock;
 }
 
-export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
+/** Four ETS official practice sets (Teacher Resources + Full-Length). */
+const ETS_CORE_SPEAKING_SETS: OfficialSpeakingSet[] = [
   {
     id: "ets-tr-01",
     title: "Official Practice · Set 1",
@@ -646,6 +648,12 @@ export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
       ],
     },
   },
+];
+
+/** ETS official sets + custom practice tests (8 total). */
+export const OFFICIAL_SPEAKING_SETS: OfficialSpeakingSet[] = [
+  ...ETS_CORE_SPEAKING_SETS,
+  ...CUSTOM_SPEAKING_SETS,
 ];
 
 export function getOfficialSpeakingSetById(

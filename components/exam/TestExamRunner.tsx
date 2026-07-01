@@ -144,6 +144,11 @@ import {
   formatMicrophoneError,
 } from "@/lib/microphone";
 import { useAuthSession } from "@/lib/auth/useAuthSession";
+import {
+  getViewerSurveyKey,
+  markPracticeCompleteForSurvey,
+} from "@/lib/surveys/localState";
+import { getOrCreateSurveyClientId } from "@/lib/surveys/clientId";
 import { getInterviewSectionImageUrl } from "@/lib/visualAssets";
 import { buildInterviewSampleAnswer } from "@/lib/interviewSampleAnswer";
 
@@ -1192,6 +1197,12 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
     });
 
     setStage("results");
+
+    if (lrResults.length + ivResults.length > 0) {
+      markPracticeCompleteForSurvey(
+        getViewerSurveyKey(userId ?? null, getOrCreateSurveyClientId())
+      );
+    }
 
   };
 

@@ -319,6 +319,55 @@ export interface PythonBenchmarkRunOneResponse {
   total_seconds: number;
   error?: string | null;
   score_preview?: string | null;
+  result?: PythonBenchmarkInterviewResult | PythonBenchmarkListenRepeatResult | null;
+}
+
+export interface PythonBenchmarkInterviewResult {
+  transcript: string;
+  transcript_segments?: Array<{
+    text: string;
+    has_issue: boolean;
+    topic_development?: { what_needs_improvement: string; why_it_matters: string } | null;
+    grammar_vocabulary?: { what_needs_improvement: string; why_it_matters: string } | null;
+    conciseness?: { what_needs_improvement: string; why_it_matters: string } | null;
+    improved_version?: string;
+  }>;
+  pace_feedback?: { summary: string; suggestion?: string } | null;
+  pronunciation_feedback?: { summary: string; suggestion?: string } | null;
+  scores: {
+    topic: number;
+    pace: number;
+    pronunciation: number;
+    grammar: number;
+  };
+  score_summary: string;
+  metrics: {
+    speaking_rate_wpm: number;
+    pause_count: number;
+    filler_word_count: number;
+    longest_pause_seconds: number;
+  };
+  feedback: {
+    summary: string;
+    sections: Array<{ title: string; content: string }>;
+  };
+  model?: string;
+}
+
+export interface PythonBenchmarkListenRepeatResult {
+  transcript: string;
+  score: number;
+  score_summary: string;
+  words?: Array<{
+    original: string | null;
+    spoken: string | null;
+    status: string;
+  }>;
+  feedback: {
+    summary: string;
+    sections: Array<{ title: string; content: string }>;
+  };
+  model?: string;
 }
 
 export interface PythonBenchmarkInterviewItem {

@@ -84,7 +84,7 @@ function buildSessionsFromOfficial(): InterviewSession[] {
   });
 }
 
-/** Four official Virtual Interview sessions (paired with official L&R sets). */
+/** Eight Virtual Interview sessions (paired with speaking sets). */
 export const INTERVIEW_SESSIONS: InterviewSession[] = buildSessionsFromOfficial();
 
 export const INTERVIEW_PROMPTS: InterviewPrompt[] = INTERVIEW_SESSIONS.flatMap(

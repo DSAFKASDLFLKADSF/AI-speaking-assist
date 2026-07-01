@@ -7,15 +7,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from generate_prompt_audio import parse_interview_from_ets, parse_listen_repeat_from_ets
+from generate_prompt_audio import parse_interview_all, parse_listen_repeat_all
 
 ROOT = Path(__file__).resolve().parents[1]
 ETS = ROOT / "lib" / "etsOfficialSpeaking.ts"
+CUSTOM = ROOT / "lib" / "customSpeakingSets.ts"
 LR_DIR = ROOT / "public" / "audio" / "listen-repeat"
 IV_DIR = ROOT / "public" / "audio" / "interview"
 
-SET_IDS = ["ets-tr-01", "ets-fl-01", "ets-fl-02", "ets-tr-02"]
-TEST_IDS = ["test-01", "test-02", "test-03", "test-04"]
+SET_IDS = [
+    "ets-tr-01",
+    "ets-fl-01",
+    "ets-fl-02",
+    "ets-tr-02",
+    "custom-01",
+    "custom-02",
+    "custom-03",
+    "custom-04",
+]
+TEST_IDS = [
+    "test-01",
+    "test-02",
+    "test-03",
+    "test-04",
+    "test-05",
+    "test-06",
+    "test-07",
+    "test-08",
+]
 
 
 def flatten_lr_from_ets(content: str) -> list[tuple[str, str, str]]:
@@ -72,17 +91,19 @@ def flatten_iv_from_ets(content: str) -> list[tuple[str, str, str]]:
 
 def main() -> None:
     content = ETS.read_text(encoding="utf-8")
+    if CUSTOM.exists():
+        content += "\n" + CUSTOM.read_text(encoding="utf-8")
     lr_ts = flatten_lr_from_ets(content)
     iv_ts = flatten_iv_from_ets(content)
-    lr_gen = parse_listen_repeat_from_ets(content)
-    iv_gen = parse_interview_from_ets(content)
+    lr_gen = parse_listen_repeat_all()
+    iv_gen = parse_interview_all()
 
     errors: list[str] = []
 
-    if len(lr_ts) != 28:
-        errors.append(f"LR ts flatten count {len(lr_ts)} != 28")
-    if len(lr_gen) != 28:
-        errors.append(f"LR generator count {len(lr_gen)} != 28")
+    if len(lr_ts) != 56:
+        errors.append(f"LR ts flatten count {len(lr_ts)} != 56")
+    if len(lr_gen) != 56:
+        errors.append(f"LR generator count {len(lr_gen)} != 56")
     if lr_ts != [(a, b, c) for a, b, c in lr_ts]:  # noqa: PLR0133
         pass
     for (set_id, pid, text_ts), (pid_gen, text_gen) in zip(lr_ts, lr_gen, strict=True):
@@ -122,7 +143,7 @@ def main() -> None:
             print(" ", e)
         sys.exit(1)
 
-    print("\nOK: 28 LR + 16 IV prompts match generator, TypeScript source, and mp3 files.")
+    print("\nOK: 56 LR + 32 IV prompts match generator, TypeScript source, and mp3 files.")
 
 
 if __name__ == "__main__":
