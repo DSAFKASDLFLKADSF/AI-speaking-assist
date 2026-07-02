@@ -1196,9 +1196,12 @@ async def _run_listen_repeat_timed(
         timer.mark("glm_scoring", "AI scoring + feedback (GLM)")
 
         feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
-        glm_score = scores.get("score", 1)
         rule_score = compute_listen_repeat_score(words_raw)
-        score = min(glm_score, rule_score)
+        glm_score = scores.get("score", rule_score)
+        if glm_score == 1 and rule_score > 1:
+            score = rule_score
+        else:
+            score = min(glm_score, rule_score)
 
         delivery, language, topic = listen_repeat_to_ets(score)
         response = ListenRepeatResponse(

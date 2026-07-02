@@ -9,7 +9,9 @@ ComparisonStatus = Literal["correct", "missing", "replacement"]
 
 
 def normalize_token(token: str) -> str:
-    return re.sub(r"[^\w']", "", token.lower())
+    lowered = token.lower()
+    lowered = re.sub(r"'s\b", "", lowered)
+    return re.sub(r"[^\w]", "", lowered)
 
 
 def tokenize(text: str) -> list[str]:
@@ -50,7 +52,7 @@ def build_word_comparison(original: str, user: str) -> list[dict]:
             i -= 1
             j -= 1
         elif j > 0 and (i == 0 or dp[i][j - 1] >= dp[i - 1][j]):
-            if i > 0:
+            if i > 0 and dp[i - 1][j] == dp[i][j - 1]:
                 aligned.append(
                     {
                         "status": "replacement",

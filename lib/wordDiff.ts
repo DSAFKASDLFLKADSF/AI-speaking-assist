@@ -2,7 +2,8 @@ import type { ComparisonWord } from "@/components/ComparisonText";
 import type { ListenRepeatScore } from "@/components/ScoreCard";
 
 function normalizeToken(token: string): string {
-  return token.toLowerCase().replace(/[^\w']/g, "");
+  const lowered = token.toLowerCase().replace(/'s\b/g, "");
+  return lowered.replace(/[^\w]/g, "");
 }
 
 function tokenize(text: string): string[] {
@@ -54,7 +55,7 @@ export function buildWordComparison(
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      if (i > 0) {
+      if (i > 0 && dp[i - 1][j] === dp[i][j - 1]) {
         aligned.push({
           status: "replacement",
           original: originalTokens[i - 1],
