@@ -1717,14 +1717,9 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
   const showRescoreButton =
-
     stage === "results" &&
-
     recordings.length > 0 &&
-
-    (missingAnalysisCount > 0 ||
-
-      !results?.scored);
+    (wantScoring || !results?.scored || missingAnalysisCount > 0);
 
 
 
