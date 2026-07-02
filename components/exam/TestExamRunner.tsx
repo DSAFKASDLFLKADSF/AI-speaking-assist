@@ -368,11 +368,15 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
       onItemDone: (recording, outcome) => {
 
-        setPartialResults((prev) =>
+        setPartialResults((prev) => {
 
-          applyPipelineOutcome(prev, recording, outcome)
+          const next = applyPipelineOutcome(prev, recording, outcome);
 
-        );
+          partialResultsRef.current = next;
+
+          return next;
+
+        });
 
       },
 
@@ -839,17 +843,11 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
 
 
 
-      const alreadyScored =
+      let alreadyScored =
 
         (pipelineMerge?.listenRepeat.filter((r) => r.analysis).length ?? 0) +
 
         (pipelineMerge?.interview.filter((r) => r.analysis).length ?? 0);
-
-      const toAnalyze = pending.filter((item) =>
-
-        needsPipelineAnalysis(partialResultsRef.current, item)
-
-      );
 
       const totalWork = allRecordings.length;
 
@@ -872,6 +870,46 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
       try {
 
         await pipelineRef.current?.waitForIdle();
+
+
+
+        const mergeAfterWait: ExamResults = {
+
+          listenRepeat: partialResultsRef.current.listenRepeat,
+
+          interview: partialResultsRef.current.interview,
+
+          summary: null,
+
+          scored: false,
+
+        };
+
+
+
+        alreadyScored =
+
+          mergeAfterWait.listenRepeat.filter((r) => r.analysis).length +
+
+          mergeAfterWait.interview.filter((r) => r.analysis).length;
+
+
+
+        const toAnalyze = pending.filter((item) =>
+
+          needsPipelineAnalysis(partialResultsRef.current, item)
+
+        );
+
+
+
+        setAnalyzeProgress((prev) => ({
+
+          ...prev,
+
+          done: alreadyScored,
+
+        }));
 
 
 
@@ -987,7 +1025,7 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
           allRecordings,
           lrResults,
           ivResults,
-          pipelineMerge
+          mergeAfterWait
         );
 
         const scoredCount =
@@ -1026,7 +1064,10 @@ export function TestExamRunner({ testId, testTitle, mode }: TestExamRunnerProps)
           allRecordings,
           [],
           [],
-          pipelineMerge
+          {
+            listenRepeat: partialResultsRef.current.listenRepeat,
+            interview: partialResultsRef.current.interview,
+          }
         );
 
         setErrorMessage(

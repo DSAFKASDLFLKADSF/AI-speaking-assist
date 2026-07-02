@@ -79,7 +79,9 @@ export async function finalizeListenRepeatAnalysis(
     pythonResult.score !== undefined
       ? clampListenRepeatScore(pythonResult.score)
       : ruleScore;
-  const score = clampListenRepeatScore(Math.min(glmScore, ruleScore));
+  const capped = clampListenRepeatScore(Math.min(glmScore, ruleScore));
+  const score =
+    glmScore === 1 && ruleScore > 1 ? clampListenRepeatScore(ruleScore) : capped;
 
   const scoreSummary =
     pythonResult.score_summary?.trim() || buildScoreSummary(words);

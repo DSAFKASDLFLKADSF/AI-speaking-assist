@@ -710,9 +710,12 @@ async def run_listen_repeat_analysis(body: ListenRepeatRequest) -> ListenRepeatR
         score_prompt
     )
     feedback_raw, score_summary = finalize_score_output(feedback_raw, score_summary)
-    glm_score = scores.get("score", 1)
     rule_score = compute_listen_repeat_score(words_raw)
-    score = min(glm_score, rule_score)
+    glm_score = scores.get("score", rule_score)
+    if glm_score == 1 and rule_score > 1:
+        score = rule_score
+    else:
+        score = min(glm_score, rule_score)
     if rule_score < glm_score:
         logger.info(
             "Listen-repeat score capped by word alignment: glm=%s rule=%s final=%s",
